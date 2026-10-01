@@ -11,6 +11,7 @@
   --visitor: #ffd166;
   --zone: #b07cff;
   --display: #38d0ff;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -31,7 +32,7 @@ html, body {
 /* ---------- toolbar ---------- */
 #toolbar {
   position: fixed;
-  top: 10px; left: 10px; right: 10px;
+  top: calc(10px + env(safe-area-inset-top, 0px)); left: 10px; right: 10px;
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
   padding: 7px 10px;
   background: var(--panel);
