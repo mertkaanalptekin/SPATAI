@@ -101,7 +101,9 @@ class Location:
 
     def distance_to(self, other: Location) -> float:
         a, b = self.to_world(), other.to_world()
-        return math.hypot(b.x - a.x, b.y - a.y)
+        dx, dy = b.x - a.x, b.y - a.y
+        # Plain sqrt rather than math.hypot, so js/spatial.js gets bit-identical results.
+        return math.sqrt(dx * dx + dy * dy)
 
     def bearing_to(self, other: Location) -> float:
         """World heading in degrees from this location towards `other`."""

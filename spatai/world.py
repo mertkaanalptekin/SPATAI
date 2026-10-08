@@ -9,6 +9,7 @@ Zone membership is derived from location: a visitor is in the zone that
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import cmp_to_key
 
 from spatai.geometry import EPSILON, Location, ReferenceFrame, normalize_angle
 from spatai.model import Place, SmartDisplay, SpatialZone, Visitor
@@ -17,6 +18,13 @@ Entity = Visitor | SmartDisplay | SpatialZone | Place
 
 FRONT_HALF_ANGLE = 45.0
 """Within this many degrees of a display's facing direction counts as "in front"."""
+
+
+def _by_distance_then_id(a: tuple[float, str], b: tuple[float, str]) -> int:
+    """Order (distance, id) pairs; distances within EPSILON count as a tie, broken by id."""
+    if abs(a[0] - b[0]) > EPSILON:
+        return -1 if a[0] < b[0] else 1
+    return (a[1] > b[1]) - (a[1] < b[1])
 
 
 @dataclass(frozen=True)
@@ -77,6 +85,20 @@ class World:
         self.places[place.name] = place
         return place
 
+    def remove(self, obj_id: str) -> Entity:
+        """Unregister an object; a removed display is also dropped from its zone."""
+        registry = next((r for r in (self.visitors, self.displays, self.zones, self.places) if obj_id in r), None)
+        if registry is None:
+            raise KeyError(obj_id)
+        obj = registry[obj_id]
+        if isinstance(obj, Place) and any(p.parent is obj for p in self.places.values()):
+            raise ValueError(f"Place {obj_id!r} still has child places")
+        del registry[obj_id]
+        if isinstance(obj, SmartDisplay):
+            for zone in self.zones.values():
+                zone.display_ids.discard(obj_id)
+        return obj
+
     def get(self, obj_id: str) -> Entity:
         for registry in (self.visitors, self.displays, self.zones, self.places):
             if obj_id in registry:
@@ -98,8 +120,9 @@ class World:
         """Visitors within `radius` metres (inclusive) of `location`, nearest first."""
         if radius < 0:
             raise ValueError(f"radius must be >= 0, got {radius}")
-        hits = [(location.distance_to(v.position), v.user_id, v) for v in self.visitors.values()]
-        return [v for d, _, v in sorted(hits) if d <= radius + EPSILON]
+        hits = [(location.distance_to(v.position), v.user_id) for v in self.visitors.values()]
+        hits = sorted((h for h in hits if h[0] <= radius + EPSILON), key=cmp_to_key(_by_distance_then_id))
+        return [self.visitors[user_id] for _, user_id in hits]
 
     def zone_at(self, location: Location) -> SpatialZone | None:
         """The zone whose boundary contains `location`; the smallest wins if zones overlap."""
@@ -116,11 +139,11 @@ class World:
         return min(hits, key=lambda p: (-p.depth(), p.region.area, p.name), default=None)
 
     def nearest_display(self, location: Location) -> SmartDisplay | None:
-        return min(
-            self.displays.values(),
-            key=lambda d: (location.distance_to(d.position), d.display_id),
-            default=None,
+        ranked = sorted(
+            ((location.distance_to(d.position), d.display_id) for d in self.displays.values()),
+            key=cmp_to_key(_by_distance_then_id),
         )
+        return self.displays[ranked[0][1]] if ranked else None
 
     def describe(self, location: Location) -> Description:
         """Most specific containing place, nearest display, and where `location` lies relative to it."""
@@ -147,8 +170,8 @@ def relative_direction(display: SmartDisplay, location: Location) -> str:
     if display.position.distance_to(location) <= EPSILON:
         return "at"
     angle = normalize_angle(display.position.bearing_to(location) - display.world_orientation())
-    if abs(angle) <= FRONT_HALF_ANGLE:
+    if abs(angle) <= FRONT_HALF_ANGLE + EPSILON:
         return "front"
-    if abs(angle) >= 180.0 - FRONT_HALF_ANGLE:
+    if abs(angle) >= 180.0 - FRONT_HALF_ANGLE - EPSILON:
         return "behind"
     return "left" if angle > 0 else "right"

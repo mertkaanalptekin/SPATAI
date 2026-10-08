@@ -51,6 +51,25 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             w.add_place(Place("Child", Rect(0, 0, 1, 1), parent=orphan_parent))
 
+    def test_remove(self):
+        w = gallery_world()
+        w.add_visitor(Visitor("u1", Location(1, 1)))
+        self.assertEqual(w.remove("u1").user_id, "u1")
+        self.assertNotIn("u1", w.visitors)
+        w.remove("d1")
+        self.assertEqual(w.zones["east"].display_ids, set())
+        with self.assertRaises(KeyError):
+            w.remove("u1")
+
+    def test_remove_place_with_children_is_refused(self):
+        w = gallery_world()
+        with self.assertRaises(ValueError):
+            w.remove("East Wing")
+        self.assertEqual(list(w.places), ["Museum", "East Wing", "Alcove"])  # order kept
+        w.remove("Alcove")
+        w.remove("East Wing")
+        self.assertNotIn("East Wing", w.places)
+
     def test_display_defaults(self):
         d = SmartDisplay("d", Location(0, 0))
         self.assertEqual(d.power_state, PowerState.OFF)
@@ -109,6 +128,12 @@ class OccupantsAtTests(unittest.TestCase):
         w.add_visitor(Visitor("u", Location(10, 1)))
         f = ReferenceFrame("rot", origin=(10, 0), rotation=90)
         self.assertEqual(len(w.occupants_at(Location(1, 0, f), 0.01)), 1)
+
+    def test_near_equal_distances_tie_break_by_id(self):
+        w = World()
+        w.add_visitor(Visitor("b", Location(0.1 + 0.2, 0)))  # 0.30000000000000004
+        w.add_visitor(Visitor("a", Location(0.3, 0)))
+        self.assertEqual([v.user_id for v in w.occupants_at(Location(0, 0), 1)], ["a", "b"])
 
     def test_negative_radius_raises(self):
         with self.assertRaises(ValueError):
