@@ -41,6 +41,18 @@ A `Rect` is axis-aligned in its own frame; put it in a rotated frame to rotate i
 
 ## Usage
 
+### Run the demo
+
+From the repository root:
+
+```
+python3 demo.py
+```
+
+`demo.py` sets up a lobby zone with four named places, two displays facing different directions, and three visitors. It prints the answers to the four location questions (`locate`, `occupants_at`, `position_in` a display's frame, `describe`), then runs the power-on rule and lists which displays turned on. Each display sits at the origin of its own reference frame, so a visitor's position in that frame reads as metres ahead of the screen and metres to its left.
+
+### In code
+
 ```python
 from spatai import (
     Circle, Location, Place, Rect, ReferenceFrame, SmartDisplay, SpatialZone,
