@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Spatial AI Neighborhood</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="viewport"></div>
+
+  <header id="toolbar">
+    <div class="brand"><span class="dot"></span>Spatial AI · Neighborhood</div>
+
+    <div class="group">
+      <span class="group-label">Visitor</span>
+      <button data-action="add-visitor" title="Spawn a visitor at the lobby entrance">＋ Visitor</button>
+      <button data-action="add-crowd" title="Spawn 10 visitors in the selected zone (default: lobby)">＋10 Crowd</button>
+      <button data-action="remove-visitor" title="Remove the selected visitor (or the most recent one)">− Visitor</button>
+    </div>
+
+    <div class="group">
+      <span class="group-label">Smart Display</span>
+      <button data-action="launch-media" class="primary" title="Switch Current_Media to interactive content on the selected display (or every powered display)">▶ Launch_Media()</button>
+      <button data-action="reset-media" title="Return Current_Media to the default loop">⟲ Default loop</button>
+    </div>
+
+    <div class="group">
+      <span class="group-label">View</span>
+      <button data-action="toggle-relations" class="toggle on" title="Show enters / controls relationships">Relations</button>
+      <button data-action="toggle-velocity" class="toggle" title="Show visitor velocity vectors">Velocity</button>
+      <button data-action="toggle-labels" class="toggle on" title="Show entity labels">Labels</button>
+      <button data-action="toggle-places" class="toggle on" title="Show the zone boundary and named places">Places</button>
+      <button data-action="reset-camera" title="Reset the camera">⌂ Camera</button>
+    </div>
+
+    <div class="group">
+      <span class="group-label">Simulation</span>
+      <button data-action="pause" title="Pause / resume visitor movement (Space)">⏸ Pause</button>
+      <button data-action="reset" title="Restore the demonstration scene">↺ Reset</button>
+    </div>
+  </header>
+
+  <aside id="inspector" class="panel"></aside>
+
+  <section id="location" class="panel">
+    <button class="panel-head" data-loc-action="collapse" aria-expanded="true" title="Show / hide the location questions">
+      <h3>Location</h3><span class="caret">▾</span>
+    </button>
+    <div class="loc-body">
+      <div class="q">
+        <div class="q-title"><span class="q-tag">Q1</span>Locate<code>locate(id)</code></div>
+        <div class="q-out" data-out="q1"></div>
+      </div>
+      <div class="q">
+        <div class="q-title"><span class="q-tag">Q2</span>Occupants<code>occupants_at(loc, r)</code></div>
+        <div class="ctrl"><label for="probe-radius">Radius <span data-out="radius"></span></label>
+          <input id="probe-radius" type="range" min="0.5" max="6" step="0.5" value="2" data-loc-input="radius"></div>
+        <div class="q-out" data-out="q2"></div>
+      </div>
+      <div class="q">
+        <div class="q-title"><span class="q-tag">Q3</span>Frame of reference<code>position_in(id, frame)</code></div>
+        <label class="q-row"><span>Frame</span><select data-loc-input="frame"></select></label>
+        <div class="q-out" data-out="q3"></div>
+      </div>
+      <div class="q">
+        <div class="q-title"><span class="q-tag">Q4</span>Describe<code>describe(loc)</code></div>
+        <div class="q-out" data-out="q4"></div>
+        <input type="search" placeholder="Find a place, e.g. near gallery-screen" aria-label="Find a place from a description" data-loc-input="find">
+        <div class="q-out" data-out="find"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="rules" class="panel">
+    <h3>Rule engine</h3>
+    <div class="rule-text">
+      IF <code>Visitor.Position</code> within <b>2.5 m</b> of <code>Display.Position</code>
+      AND <code>Zone.Occupancy</code> &lt; <b>20</b> → <code>Power_State = ON</code>
+    </div>
+    <div id="rule-eval"></div>
+    <h3>Event log</h3>
+    <ol id="log"></ol>
+  </section>
+
+  <div id="hint">Click: inspect or probe · hover: describe · drag visitors · right-drag: pan · scroll: zoom</div>
+  <div id="hover-tip" role="status"></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+[project]
+name = "spatai"
+version = "0.1.0"
+description = "Semantic model for a spatial AI system of visitors, zones and smart displays"
+requires-python = ">=3.10"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["spatai"]
