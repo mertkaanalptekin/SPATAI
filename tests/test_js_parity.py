@@ -177,3 +177,110 @@ class JsParityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# Exhibition floor plan and metrics (docs/SIMULATION_METRICS.md R23)
+# ---------------------------------------------------------------------------
+
+METRIC_SPEC = {
+    "points": [[x, y] for x in _frange(-1, 45, 2) for y in _frange(-1, 20, 2)]
+    + [[12, 2.5], [12, 6], [4, 4], [2, 9.5], [25, 9.5], [24, 2], [44, 19], [0, 0]],
+    "targets": [[8, 4], [2, 4], [2, 15], [41, 17], [16, 4]],
+}
+
+
+def _fin(v):
+    return "inf" if v == math.inf else v
+
+
+def _region_plain(r):
+    if isinstance(r, Circle):
+        return {"kind": "circle", "center": [r.center.x, r.center.y], "radius": r.radius}
+    return {"kind": "rect", "bounds": [r.x_min, r.y_min, r.x_max, r.y_max]}
+
+
+def run_metric_queries(spec):
+    """Python twin of runMetricQueries() in tests/js/metrics_parity.mjs."""
+    from spatai import metrics as M
+    from spatai.exhibition import build_exhibition
+
+    world, frames, plan = build_exhibition()
+    out = {"plan": {
+        "rooms": [[n, _region_plain(r)] for n, r in plan.rooms.items()],
+        "doors": [[d.door_id, list(d.rooms), list(d.point), d.staff_only] for d in plan.doors.values()],
+        "edges": [[e.src, e.dst, e.weight, e.kind, list(e.via), e.label] for e in plan.seq_edges],
+        "exhibits": [[n, [l.x, l.y], plan.exhibit_hall[n]] for n, l in plan.exhibits.items()],
+        "shortcuts": [e.label for e in plan.shortcuts],
+    }}
+    out["scene"] = {
+        "places": [[p.name, _region_plain(p.region), p.parent.name if p.parent else None] for p in world.places.values()],
+        "displays": [[d.display_id, [d.position.to_world().x, d.position.to_world().y], d.world_orientation()]
+                     for d in world.displays.values()],
+        "visitors": [[v.user_id, [v.position.x, v.position.y], v.role] for v in world.visitors.values()],
+        "frames": list(frames),
+    }
+    pts = [plan.centre(n) for n in M.REFERENCE_NODES]
+    out["pairs"] = []
+    for role in ["visitor", "staff"]:
+        for strict in [False, True]:
+            for a in pts:
+                for b in pts:
+                    row = []
+                    for m in M.METRICS:
+                        r = M.measure(plan, m, a, b, role, strict)
+                        row.append([_fin(r.value), list(r.nodes)])
+                    out["pairs"].append(row)
+    targets = [Location(x, y) for x, y in spec["targets"]]
+    out["points"] = []
+    for x, y in spec["points"]:
+        p = Location(x, y)
+        node, snapped = M.seq_node(plan, p)
+        out["points"].append({
+            "room": plan.room_at(p),
+            "node": [node, snapped],
+            "to": [[_fin(M.walk(plan, p, t).value), _fin(M.measure(plan, "seq", p, t).value),
+                    _fin(M.measure(plan, "task", p, t).value), _fin(M.measure(plan, "seq", t, p).value),
+                    _fin(M.walk(plan, p, t, "staff").value)] for t in targets],
+        })
+    ranges = M.reference_ranges(plan)
+    out["ranges"] = {m: list(r) for m, r in ranges.items()}
+    out["axioms"] = M.axiom_report(plan)
+    out["inference"] = [{
+        "occupancy": M.occupancy(plan, world, t, ranges),
+        "strict": M.occupancy(plan, world, t, ranges, True),
+        "discrepancies": [[d.user_id, d.near_metric, d.far_metric, _fin(d.near_value), _fin(d.far_value)]
+                          for d in M.discrepancies(plan, world, t, ranges)],
+    } for t in targets]
+    return out
+
+
+@unittest.skipIf(NODE is None, "node is not installed")
+class JsMetricParityTests(unittest.TestCase):
+    assertSame = JsParityTests.assertSame
+
+    @classmethod
+    def setUpClass(cls):
+        cls.py = json.loads(json.dumps(run_metric_queries(METRIC_SPEC)))
+        proc = subprocess.run(
+            [NODE, str(ROOT / "tests" / "js" / "metrics_parity.mjs")],
+            input=json.dumps(METRIC_SPEC), capture_output=True, text=True, check=True, timeout=120,
+        )
+        cls.js = json.loads(proc.stdout)
+
+    def test_same_plan_and_scene(self):
+        self.assertSame(self.py["plan"], self.js["plan"], "plan")
+        self.assertSame(self.py["scene"], self.js["scene"], "scene")
+
+    def test_reference_pairs_every_metric_role_and_valve_mode(self):
+        self.assertEqual(len(self.py["pairs"]), 4 * 12 * 12)
+        self.assertSame(self.py["pairs"], self.js["pairs"], "pairs")
+
+    def test_grid_points(self):
+        for i, (py, js) in enumerate(zip(self.py["points"], self.js["points"])):
+            self.assertSame(py, js, f"points[{i}] at {METRIC_SPEC['points'][i]}")
+
+    def test_ranges_axioms_inference(self):
+        for key in ["ranges", "axioms", "inference"]:
+            self.assertSame(self.py[key], self.js[key], key)
+        self.assertFalse(self.py["axioms"]["task_small_self_distance"])

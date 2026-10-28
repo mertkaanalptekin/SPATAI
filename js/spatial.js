@@ -164,8 +164,9 @@ export const DEFAULT_LOOP_MEDIA = 'default_loop';
 export const INTERACTIVE_MEDIA = 'interactive';
 
 export class Visitor {
-  constructor(userId, position, { velocity = [0, 0], dwellTime = 0 } = {}) {
-    Object.assign(this, { userId, position, velocity, dwellTime });
+  /** `role` is "visitor" or "staff"; staff may use staff-only doors (docs/SIMULATION_METRICS.md R5). */
+  constructor(userId, position, { velocity = [0, 0], dwellTime = 0, role = 'visitor' } = {}) {
+    Object.assign(this, { userId, position, velocity, dwellTime, role });
   }
 }
 

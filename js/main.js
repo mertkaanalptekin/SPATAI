@@ -16,7 +16,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 
-import { buildScene } from './scene.js';
+import { HALLS, buildExhibition } from './exhibition.js';
+import { walk } from './metrics.js';
+import { initMetrics } from './metrics-panel.js';
 import {
   Circle, FRONT_HALF_ANGLE, Location, MAX_OCCUPANCY_FOR_POWER_ON, OFFSET_M, PROXIMITY_THRESHOLD_M,
   Visitor as ModelVisitor, WORLD_FRAME, normalizeAngle, relativeDirection, resolveDescription, shouldPowerOn,
@@ -39,15 +41,24 @@ const FRAME_AXIS_LEN = 3.5;   // metres drawn for each reference-frame axis
 const MARGIN = 0.4;
 const UP = new THREE.Vector3(0, 1, 0);
 
-// The location model: demo.py's scene, built with the JS port.
-const { world: model, frames: FRAMES } = buildScene();
+// The location model: the 10-hall exhibition of docs/SIMULATION_METRICS.md, built with the JS port.
+const { world: model, frames: FRAMES, plan: PLAN } = buildExhibition();
 
 const ZONE_COLOR = 0xb07cff;
-// Nested places take the first three categorical slots in order; the outer place is neutral.
-const PLACE_COLORS = ['#3987e5', '#d95926', '#199e70'];
+// Places are neutral: the categorical colours are kept for the three metrics (metrics-panel.js).
 const ROOT_PLACE_COLOR = '#8592a3';
+function placeStyle(place) {
+  if (place.parent === null) return { color: ROOT_PLACE_COLOR, opacity: 0.03 };
+  if (place.name.startsWith('Exhibit ')) return { color: '#f2e3b3', opacity: 0.45 };
+  const hall = HALLS.indexOf(place.name);
+  if (hall >= 0) return { color: hall % 2 ? '#a3adbb' : '#7f8a9a', opacity: 0.09 };
+  return { color: '#9aa7b8', opacity: 0.05 };   // Entrance, Checkout, corridor, reset passage
+}
 const FRAME_COLOR = 0xe87ba4;
 const PROBE_COLOR = 0x38d0ff;
+const WANDER_ROOMS = ['Entrance', ...HALLS, 'Central Corridor', 'Checkout'];
+// Rooms whose label would collide with a neighbour's at the default spot (world metres).
+const LABEL_AT = { 'Central Corridor': [19.5, 9.5], 'Reset Passage': [2, 9.5], Entrance: [2, 6.3], Checkout: [2, 12.7] };
 
 const DIRECTION_PHRASE = { front: 'in front of', behind: 'behind', left: 'left of', right: 'right of', at: 'at' };
 
@@ -144,10 +155,10 @@ container.appendChild(labelRenderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0d1117);
-scene.fog = new THREE.Fog(0x0d1117, 45, 90);
+scene.fog = new THREE.Fog(0x0d1117, 80, 170);
 
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 200);
-const HOME_VIEW = { pos: new THREE.Vector3(-0.4, 21, 23.5), target: new THREE.Vector3(-0.4, 0, 1.9) };
+const HOME_VIEW = { pos: new THREE.Vector3(-0.6, 47, 42), target: new THREE.Vector3(-0.6, 0, 3.4) };
 camera.position.copy(HOME_VIEW.pos);
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -155,14 +166,14 @@ controls.target.copy(HOME_VIEW.target);
 controls.enableDamping = true;
 controls.maxPolarAngle = Math.PI / 2 - 0.05;
 controls.minDistance = 4;
-controls.maxDistance = 60;
+controls.maxDistance = 130;
 
 scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x1a1d24, 0.7));
 const sun = new THREE.DirectionalLight(0xffffff, 0.8);
 sun.position.set(-8, 20, 12);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -18, right: 18, top: 12, bottom: -12, near: 1, far: 50 });
+Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 18, bottom: -18, near: 1, far: 90 });
 scene.add(sun);
 
 // Floor, grid and walls ------------------------------------------------------
@@ -185,13 +196,54 @@ scene.add(floor);
   scene.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x2a313c })));
 }
 
+// Partition walls on every room boundary, with a gap at each door (R3, R4).
+const WALL_H = 1.3, WALL_T = 0.16;
+
+/** Wall segments [x1, y1, x2, y2] in world metres: room edges merged per line, minus door gaps. */
+function wallSegments(plan) {
+  const lines = new Map();   // 'v:x' or 'h:y' → [[from, to], ...]
+  const add = (key, a, b) => { if (!lines.has(key)) lines.set(key, []); lines.get(key).push([a, b]); };
+  for (const r of plan.rooms.values()) {
+    add(`h:${r.yMin}`, r.xMin, r.xMax); add(`h:${r.yMax}`, r.xMin, r.xMax);
+    add(`v:${r.xMin}`, r.yMin, r.yMax); add(`v:${r.xMax}`, r.yMin, r.yMax);
+  }
+  const merged = new Map();
+  for (const [key, spans] of lines) {
+    spans.sort((p, q) => p[0] - q[0]);
+    const outSpans = [];
+    for (const [a, b] of spans) {
+      const last = outSpans[outSpans.length - 1];
+      if (last && a <= last[1] + 1e-9) last[1] = Math.max(last[1], b); else outSpans.push([a, b]);
+    }
+    merged.set(key, outSpans);
+  }
+  for (const d of plan.doors.values()) {
+    const [px, py] = d.point;
+    const onV = (merged.get(`v:${px}`) ?? []).some(([a, b]) => py > a && py < b);
+    const key = onV ? `v:${px}` : `h:${py}`, c = onV ? py : px, h = DOOR_GAP / 2;
+    merged.set(key, (merged.get(key) ?? []).flatMap(([a, b]) =>
+      (c + h <= a || c - h >= b) ? [[a, b]] : [[a, c - h], [c + h, b]].filter(([u, w]) => w - u > 0.05)));
+  }
+  const segs = [];
+  for (const [key, spans] of merged) {
+    const [axis, v] = [key[0], Number(key.slice(2))];
+    for (const [a, b] of spans) segs.push(axis === 'v' ? [v, a, v, b] : [a, v, b, v]);
+  }
+  return segs;
+}
+const DOOR_GAP = 1.2;
+
 {
-  const wallMat = new THREE.MeshStandardMaterial({ color: 0x232a35, roughness: 0.9 });
-  const back = new THREE.Mesh(new THREE.BoxGeometry(floorW + 0.4, 3, 0.2), wallMat);
-  back.position.set((FLOOR.minX + FLOOR.maxX) / 2, 1.5, FLOOR.minZ - 0.1);
-  const side = new THREE.Mesh(new THREE.BoxGeometry(0.2, 3, floorD + 0.2), wallMat);
-  side.position.set(FLOOR.maxX + 0.1, 1.5, (FLOOR.minZ + FLOOR.maxZ) / 2);
-  for (const w of [back, side]) { w.receiveShadow = true; scene.add(w); }
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0x2a3340, roughness: 0.85, transparent: true, opacity: 0.92 });
+  for (const [x1, y1, x2, y2] of wallSegments(PLAN)) {
+    const len = Math.hypot(x2 - x1, y2 - y1);
+    const vertical = x1 === x2;
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(vertical ? WALL_T : len + WALL_T, WALL_H, vertical ? len + WALL_T : WALL_T), wallMat);
+    wall.position.copy(worldXYToThree((x1 + x2) / 2, (y1 + y2) / 2, WALL_H / 2));
+    wall.castShadow = true;
+    wall.receiveShadow = true;
+    scene.add(wall);
+  }
 }
 
 // Shown while the Places layer, which labels the Entrance itself, is off.
@@ -256,8 +308,8 @@ class SpatialZone {
     this.hub.add(this.label.obj);
 
     // Ceiling light whose intensity is the zone's Ambient_Light
-    this.spot = new THREE.SpotLight(0xfff1dc, 1, 0, 0.7, 0.6, 0);
-    this.spot.position.set(centre.x, 10, centre.z);
+    this.spot = new THREE.SpotLight(0xfff1dc, 1, 0, 0.95, 0.6, 0);
+    this.spot.position.set(centre.x, 26, centre.z);
     this.spot.target.position.set(centre.x, 0, centre.z);
 
     scene.add(this.floor, this.border, this.hub, this.spot, this.spot.target);
@@ -565,16 +617,21 @@ class Visitor {
 
   pickTarget() {
     // Visitors are drawn to displays now and then, which is what exercises the rule.
+    const goal = new THREE.Vector3();
     const candidates = this.homeZone ? this.homeZone.displays : displays;
-    if (Math.random() < 0.38 && candidates.length) {
+    if (Math.random() < 0.3 && candidates.length) {
       const d = pick(candidates);
       const dir = d.forward.clone().applyAxisAngle(UP, rand(-0.9, 0.9));
-      this.target.copy(d.Position).addScaledVector(dir, rand(0.7, 2.2));
-      clampToFloor(this.target);
-      return;
+      goal.copy(d.Position).addScaledVector(dir, rand(0.9, 2.2));
+    } else {
+      const r = PLAN.rooms.get(pick(WANDER_ROOMS));
+      goal.copy(toThree(new Location(rand(r.xMin + 0.8, r.xMax - 0.8), rand(r.yMin + 0.8, r.yMax - 0.8))));
     }
-    const z = this.homeZone ?? (this.zone && Math.random() < 0.55 ? this.zone : pick(zones));
-    this.target.copy(z.randomPoint());
+    clampToFloor(goal);
+    // Walk there through the doors rather than through the walls (R15).
+    const route = walk(PLAN, toModel(this.Position), toModel(goal), this.model.role);
+    this.waypoints = route.value === Infinity ? [goal] : route.path.slice(1).map(([x, y]) => worldXYToThree(x, y));
+    this.target.copy(this.waypoints.shift());
   }
 
   update(dt, others) {
@@ -585,7 +642,9 @@ class Visitor {
     } else {
       tmpTo.subVectors(this.target, this.Position).setY(0);
       const d = tmpTo.length();
-      if (d < 0.25) {
+      if (d < 0.25 && this.waypoints?.length) {
+        this.target.copy(this.waypoints.shift());   // through a door, on to the next leg
+      } else if (d < 0.25) {
         this.pause = rand(1.5, 6);
         this.pickTarget();
       } else {
@@ -704,14 +763,12 @@ scene.add(selRing);
 const placeViews = new Map();   // name → { place, fillMat, lineMat, baseOpacity, label }
 
 {
-  let slot = 0;
   for (const place of model.places.values()) {
     const nested = place.parent !== null;
-    const color = nested ? PLACE_COLORS[slot++ % PLACE_COLORS.length] : ROOT_PLACE_COLOR;
+    const { color, opacity: baseOpacity } = placeStyle(place);
     const depth = place.depth();
     const outline = regionOutline(place.region);
 
-    const baseOpacity = nested ? 0.2 : 0.05;
     const fillMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: baseOpacity, depthWrite: false });
     const fill = new THREE.Mesh(groundFill(outline), fillMat);
     fill.position.y = 0.012 + depth * 0.003;
@@ -723,11 +780,18 @@ const placeViews = new Map();   // name → { place, fillMat, lineMat, baseOpaci
     // south edge, clear of the displays and frame axes near their middles; the
     // outer place's label sits in its south-west corner.
     let anchor = place.region.centroid();
-    if (place.region.worldCorners) {
+    if (LABEL_AT[place.name]) {
+      anchor = new Location(...LABEL_AT[place.name]);
+    } else if (place.name.startsWith('Exhibit ')) {
+      const c = place.region.centroid();
+      anchor = new Location(c.x, c.y - 1.2);   // just south, clear of wall displays' labels
+    } else if (place.region.worldCorners) {
       const r = place.region;
+      // South-row rooms are labelled along their north edge, clear of the displays on the south wall.
+      const top = nested && r.yMin === 0;
       anchor = nested
-        ? new Location(r.xMax - Math.min(1.3, (r.xMax - r.xMin) / 2), r.yMin + 0.45, r.frame)
-        : new Location(r.xMin + 1.9, r.yMin + 0.6, r.frame);
+        ? new Location(r.xMax - Math.min(1.6, (r.xMax - r.xMin) / 2), top ? r.yMax - 0.5 : r.yMin + 0.5, r.frame)
+        : new Location(r.xMin + 3, r.yMax + 1.1, r.frame);   // the building: just outside its north wall
     }
     const label = makeLabel('place', 0.05);
     label.obj.position.copy(toThree(anchor, 0.05));
@@ -748,7 +812,7 @@ const placeViews = new Map();   // name → { place, fillMat, lineMat, baseOpaci
     const b = z.boundary;
     const tag = makeLabel('zone-tag', 0.05);
     tag.el.textContent = `zone ${z.zoneId} · ${b.xMax - b.xMin} × ${b.yMax - b.yMin} m`;
-    tag.obj.position.copy(toThree(new Location(b.xMin + 2.2, b.yMax - 0.45, b.frame), 0.05));
+    tag.obj.position.copy(toThree(new Location(b.xMax - 5, b.yMax + 1.1, b.frame), 0.05));
     placesGroup.add(tag.obj);
   }
 }
@@ -772,7 +836,7 @@ function log(msg, type = 'info') {
 // ---------------------------------------------------------------------------
 // Visitor management
 // ---------------------------------------------------------------------------
-function spawnVisitor(pos, { homeZone = null, silent = false, id = null, anchored = false, dwell = 0 } = {}) {
+function spawnVisitor(pos, { homeZone = null, silent = false, id = null, anchored = false, dwell = 0, role = 'visitor' } = {}) {
   if (visitors.length >= MAX_VISITORS) {
     log(`Visitor limit (${MAX_VISITORS}) reached`, 'warn');
     return null;
@@ -783,7 +847,7 @@ function spawnVisitor(pos, { homeZone = null, silent = false, id = null, anchore
     while (model.visitors.has(`V-${String(n).padStart(3, '0')}`)) n++;
     userId = `V-${String(n).padStart(3, '0')}`;
   }
-  const mv = model.addVisitor(new ModelVisitor(userId, toModel(clampToFloor(pos.clone())), { dwellTime: dwell }));
+  const mv = model.addVisitor(new ModelVisitor(userId, toModel(clampToFloor(pos.clone())), { dwellTime: dwell, role }));
   const v = new Visitor(mv, { homeZone, anchored });
   if (silent) v.zone = zoneAt(v.Position);
   visitors.push(v);
@@ -943,7 +1007,7 @@ const loc = {
   subject: null,        // Q1: id of the object to locate
   probe: null,          // Q2: Location clicked on the ground
   radius: 2,            // Q2: metres
-  frame: 'gallery-screen', // Q3: 'world' or a display's frame id
+  frame: 'g2-screen',   // Q3: 'world' or a display's frame id
   visitor: 'bob',       // Q3: visitor shown in that frame
   hover: null,          // Q4: Location under the pointer
   find: null,           // Q4: resolveDescription() result for the text box
@@ -1148,13 +1212,14 @@ function updateFrameOverlay() {
   const { xArrow, yArrow, xLabel, yLabel, along, across, alongLabel, acrossLabel } = frameParts;
   xArrow.position.copy(o); xArrow.setDirection(ex.clone().sub(o).normalize());
   yArrow.position.copy(o); yArrow.setDirection(ey.clone().sub(o).normalize());
+  xLabel.obj.visible = yLabel.obj.visible = locGroup.visible;   // CSS2D labels ignore their parent
   xLabel.obj.position.copy(ex.clone().add(ex.clone().sub(o).setLength(0.5)));
   yLabel.obj.position.copy(ey.clone().add(ey.clone().sub(o).setLength(0.5)));
   setHTML(xLabel.el, isWorld ? 'x (world)' : 'x′ ahead');
   setHTML(yLabel.el, isWorld ? 'y (world)' : 'y′ left');
 
   const v = loc.visitor && model.visitors.get(loc.visitor);
-  const show = !!v;
+  const show = !!v && locGroup.visible;
   for (const part of [along, across, alongLabel.obj, acrossLabel.obj]) part.visible = show;
   if (!show) return;
   const p = v.position.inFrame(frame);
@@ -1237,6 +1302,11 @@ function updateVisuals(dt, t) {
 
   if (velocityGroup.visible) for (const v of visitors) v.updateArrow();
 
+  // Each tab shows only its own overlays.
+  const metricsMode = metricsActive();
+  locGroup.visible = !metricsMode;
+  metricsUI.setSceneVisible(metricsMode);
+  document.body.classList.toggle('metrics-mode', metricsMode);
   updateFrameOverlay();
   updateFindMarker(t);
 
@@ -1282,6 +1352,7 @@ const attrRow = (name, field, derived = false) =>
 function select(entity) {
   selected = entity;
   if (entity) setLocSubject(entityId(entity));
+  if (entity?.kind === 'visitor' && metricsActive()) metricsUI.setA(entity.User_ID);
   renderInspector(true);
   renderLocation();
 }
@@ -1297,7 +1368,7 @@ function renderInspector(full = false) {
 
     if (e.kind === 'visitor') {
       html += `<div class="attrs">${attrRow('User_ID', 'User_ID')}${attrRow('Position', 'Position')}${
-        attrRow('Velocity', 'Velocity')}${attrRow('Dwell_Time', 'Dwell_Time')}${attrRow('Place', 'Place', true)}</div>
+        attrRow('Velocity', 'Velocity')}${attrRow('Dwell_Time', 'Dwell_Time')}${attrRow('Role', 'Role')}${attrRow('Place', 'Place', true)}</div>
         <h4>Relationships</h4><div data-field="rel"></div>
         <h4>Rule context</h4><div data-field="ctx"></div>
         <div class="btns"><button data-action="remove-visitor" class="danger">Remove visitor</button></div>
@@ -1339,6 +1410,7 @@ function renderInspector(full = false) {
     f.Position = fmtLoc(m.position) + ' m';
     f.Velocity = `(${f2(m.velocity[0])}, ${f2(m.velocity[1])}) · ${e.Velocity.length().toFixed(2)} m/s`;
     f.Dwell_Time = `${e.Dwell_Time.toFixed(1)} s`;
+    f.Role = m.role === 'staff' ? '<span class="warn">staff</span> (may use staff doors)' : 'visitor';
     f.Place = esc(model.placeAt(m.position)?.name ?? '—');
     f.rel = e.zone ? `${chip(e)}<span class="rel">enters</span>${chip(e.zone)}` : '<span class="no">outside all zones</span>';
     const nd = model.nearestDisplay(m.position);
@@ -1573,6 +1645,8 @@ inspectorEl.addEventListener('input', (e) => {
 
 // Location panel ---------------------------------------------------------------
 locEl.addEventListener('click', (e) => {
+  const tab = e.target.closest('[data-tab]');
+  if (tab) { setTab(tab.dataset.tab); return; }
   const head = e.target.closest('[data-loc-action="collapse"]');
   if (head) { setLocationCollapsed(!locEl.classList.contains('collapsed')); return; }
   const chipEl = e.target.closest('[data-locate]');
@@ -1597,8 +1671,17 @@ locInput('frame').addEventListener('change', (e) => { loc.frame = e.target.value
 
 function setLocationCollapsed(collapsed) {
   locEl.classList.toggle('collapsed', collapsed);
-  locEl.querySelector('.panel-head').setAttribute('aria-expanded', String(!collapsed));
+  locEl.querySelector('[data-loc-action="collapse"]').setAttribute('aria-expanded', String(!collapsed));
 }
+
+/** Location | Metrics tabs of the left panel. */
+function setTab(name) {
+  for (const t of locEl.querySelectorAll('[data-tab]')) t.setAttribute('aria-selected', String(t.dataset.tab === name));
+  for (const pane of locEl.querySelectorAll('[data-pane]')) pane.hidden = pane.dataset.pane !== name;
+  setLocationCollapsed(false);
+  if (name === 'metrics') metricsUI.render(0);
+}
+const metricsActive = () => !locEl.querySelector('[data-pane="metrics"]').hidden && !locEl.classList.contains('collapsed');
 
 window.addEventListener('keydown', (e) => {
   if (e.target.closest('input, textarea, select')) return;
@@ -1712,9 +1795,11 @@ canvas.addEventListener('pointerup', (e) => {
     if (ent) {
       select(ent);
     } else {
-      // Empty ground: probe who is there (Q2) and describe the spot (Q4).
+      // Empty ground: in the Metrics tab it becomes B; otherwise probe who is there (Q2)
+      // and describe the spot (Q4).
       const g = groundAt(e);
-      if (g) { loc.probe = g; loc.hover = g; updateProbe(); }
+      if (g && metricsActive()) metricsUI.setPoint(g);
+      else if (g) { loc.probe = g; loc.hover = g; updateProbe(); }
       select(null);
     }
   }
@@ -1747,7 +1832,7 @@ window.addEventListener('resize', () => {
 // ---------------------------------------------------------------------------
 function loadDemo() {
   for (const v of visitors) v.dispose();
-  // The model starts with buildScene()'s visitors; they are re-added below as scene objects.
+  // The model starts with buildExhibition()'s agents; they are re-added below as scene objects.
   for (const id of [...model.visitors.keys()]) model.remove(id);
   visitors = [];
   visitorSeq = 0;
@@ -1765,18 +1850,19 @@ function loadDemo() {
   logEl.innerHTML = '';
   simTime = 0;
 
-  // demo.py's visitors stand where demo.py puts them until you drag them.
-  for (const mv of buildScene().world.visitors.values()) {
-    spawnVisitor(toThree(mv.position), { id: mv.userId, anchored: true, dwell: mv.dwellTime, silent: true });
+  // The spec's agents (R15) stand where the spec puts them until you drag them.
+  for (const mv of buildExhibition().world.visitors.values()) {
+    spawnVisitor(toThree(mv.position), { id: mv.userId, anchored: true, dwell: mv.dwellTime, silent: true, role: mv.role });
   }
 
-  Object.assign(loc, { subject: null, probe: null, hover: null, find: null, visitor: 'bob', frame: 'gallery-screen' });
+  Object.assign(loc, { subject: null, probe: null, hover: null, find: null, visitor: 'bob', frame: 'g2-screen' });
+  metricsUI?.reset();
   locInput('find').value = '';
   updateProbe();
   renderLocation();
 
-  log(`Demonstration scene loaded (demo.py): ${zones.length} zone, ${model.places.size} places, ` +
-      `${displays.length} displays, ${visitors.length} visitors`, 'action');
+  log(`Exhibition loaded (docs/SIMULATION_METRICS.md): ${HALLS.length} halls, ${PLAN.shortcuts.length} shortcuts, ` +
+      `${displays.length} displays, ${visitors.length} agents`, 'action');
 }
 
 // ---------------------------------------------------------------------------
@@ -1784,6 +1870,12 @@ function loadDemo() {
 // ---------------------------------------------------------------------------
 const clock = new THREE.Clock();
 let uiTimer = 0;
+
+// Metrics tab and overlays (R16-R22).
+const metricsUI = initMetrics({
+  THREE, model, plan: PLAN, worldXYToThree, makeLabel, log, esc, placesGroup, scene,
+  panel: locEl.querySelector('[data-pane="metrics"]'),
+});
 
 if (window.matchMedia('(max-width: 600px)').matches) setLocationCollapsed(true);
 entranceMarker.obj.visible = !placesGroup.visible;
@@ -1807,6 +1899,7 @@ function animate() {
     renderRuleEval();
     renderInspector();
     renderLocation();
+    metricsUI.render(0.2);
   }
 
   controls.update();
@@ -1817,7 +1910,8 @@ animate();
 
 // Read-only handle for tests and the console.
 window.spatai = {
-  model, frames: FRAMES, loc, describeText, visitors: () => visitors, displays, toThree, toModel,
+  model, frames: FRAMES, plan: PLAN, loc, describeText, visitors: () => visitors, displays, toThree, toModel,
+  metrics: () => metricsUI,
   /** Screen pixel of model point (x, y) at height h, e.g. to click it from a test. */
   screenOf(x, y, h = 0) {
     const v = toThree(new Location(x, y), h).project(camera);

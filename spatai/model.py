@@ -24,6 +24,8 @@ class Visitor:
     """Metres per second, in the frame of `position`."""
     dwell_time: float = 0.0
     """Seconds spent in the current zone."""
+    role: str = "visitor"
+    """"visitor" or "staff"; staff may use staff-only doors (docs/SIMULATION_METRICS.md R5)."""
 
 
 @dataclass

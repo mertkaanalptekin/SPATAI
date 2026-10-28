@@ -198,18 +198,63 @@ table.overview th { color: var(--muted); font-weight: 500; }
   display: flex; flex-direction: column;
   padding: 8px 12px;
 }
-.panel-head {
-  all: unset; box-sizing: border-box;
-  display: flex; align-items: center; width: 100%;
-  cursor: pointer; padding: 2px 0 6px;
+.panel-head { display: flex; align-items: center; gap: 6px; padding: 0 0 6px; }
+.tabs { display: flex; gap: 2px; }
+.tabs button {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600;
+  color: var(--muted); background: none; border: 1px solid transparent; padding: 3px 8px;
 }
-button.panel-head:hover { background: none; }
-.panel-head:focus-visible { outline: 2px solid var(--accent); border-radius: 4px; }
-.panel-head h3 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
-.panel-head .caret { margin-left: auto; color: var(--muted); transition: transform .15s; }
+.tabs button[aria-selected="true"] { color: var(--text); background: rgba(255, 255, 255, 0.07); border-color: var(--border); }
+.tabs button:focus-visible, .caret-btn:focus-visible { outline: 2px solid var(--accent); }
+.caret-btn { margin-left: auto; background: none; border: none; padding: 2px 6px; }
+.caret-btn:hover { background: rgba(255, 255, 255, 0.08); }
+.panel-head .caret { color: var(--muted); display: inline-block; transition: transform .15s; }
 #location.collapsed .caret { transform: rotate(-90deg); }
 #location.collapsed .loc-body { display: none; }
-#location.collapsed .panel-head { padding-bottom: 2px; }
+#location.collapsed .panel-head { padding-bottom: 0; }
+.loc-body[hidden] { display: none; }
+
+/* ---------- metrics tab ---------- */
+.met-body h4 { margin: 12px 0 4px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+.met-body h4 span { text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: 4px; }
+.m-hint { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
+.m-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.m-pick { display: flex; align-items: center; gap: 5px; flex: 1; min-width: 0; font-weight: 700; }
+.m-pick select {
+  font: inherit; font-weight: 400; color: var(--text); background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border); border-radius: 7px; padding: 4px 6px; flex: 1; min-width: 0;
+}
+.m-pick select option, .m-pick select optgroup { background: #12171f; }
+.m-opts { justify-content: space-between; font-size: 12px; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.seg button { border: none; border-radius: 0; padding: 3px 9px; font-size: 12px; }
+.seg button.on { background: rgba(56, 208, 255, 0.2); color: #c9f3ff; }
+.chk { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; cursor: pointer; }
+.chk input { accent-color: var(--accent); margin: 0; }
+.m-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.m-table th { color: var(--muted); font-weight: 500; text-align: right; padding: 3px 2px; border-bottom: 1px solid var(--border); }
+.m-table td { text-align: right; padding: 3px 2px; border-bottom: 1px solid var(--border); }
+.m-table td:first-child, .m-table th:first-child { text-align: left; }
+.m-table .u { color: var(--muted); font-size: 11px; }
+.sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.m-notes { font-size: 11.5px; color: var(--muted); margin-top: 5px; }
+.m-chart svg { display: block; overflow: visible; }
+.m-occ-row { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; font-size: 12px; padding: 2px 0; }
+.m-occ-row > span:first-child { white-space: nowrap; }
+.m-occ-row > span:last-child { text-align: right; }
+.m-disc-row { font-size: 12px; color: var(--warn); padding: 2px 0; }
+.m-toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; }
+.m-axioms { font-size: 11.5px; color: var(--muted); }
+#log li.disc { color: var(--warn); }
+/* In the Metrics tab the rule panel shrinks to its event log, which carries the discrepancy events. */
+body.metrics-mode #rules .rule-text, body.metrics-mode #rules #rule-eval, body.metrics-mode #rules h3:first-child { display: none; }
+body.metrics-mode #rules { max-height: 24vh; }
+.lbl.metric { font-size: 10px; font-weight: 600; background: rgba(13, 17, 23, 0.85); }
+.lbl.metric.case { font-size: 11px; }
+.lbl.metric.big { font-size: 12px; padding: 3px 8px; }
+.lbl.metric.node { font-size: 13px; font-weight: 700; padding: 1px 7px; border-radius: 99px; }
+.lbl.metric.end { color: var(--text); font-weight: 800; border-radius: 99px; padding: 1px 6px; }
+.lbl.metric.shortcut { font-size: 10px; }
 .loc-body { overflow-y: auto; min-height: 0; }
 .q { padding: 7px 0; border-top: 1px solid var(--border); }
 .q-title { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 12px; }

@@ -23,7 +23,7 @@
     <div class="group">
       <span class="group-label">Visitor</span>
       <button data-action="add-visitor" title="Spawn a visitor at the lobby entrance">＋ Visitor</button>
-      <button data-action="add-crowd" title="Spawn 10 visitors in the selected zone (default: lobby)">＋10 Crowd</button>
+      <button data-action="add-crowd" title="Spawn 10 visitors in the selected zone (default: exhibition)">＋10 Crowd</button>
       <button data-action="remove-visitor" title="Remove the selected visitor (or the most recent one)">− Visitor</button>
     </div>
 
@@ -52,10 +52,14 @@
   <aside id="inspector" class="panel"></aside>
 
   <section id="location" class="panel">
-    <button class="panel-head" data-loc-action="collapse" aria-expanded="true" title="Show / hide the location questions">
-      <h3>Location</h3><span class="caret">▾</span>
-    </button>
-    <div class="loc-body">
+    <div class="panel-head">
+      <div class="tabs" role="tablist" aria-label="Left panel">
+        <button role="tab" data-tab="location" aria-selected="true">Location</button>
+        <button role="tab" data-tab="metrics" aria-selected="false">Metrics</button>
+      </div>
+      <button class="caret-btn" data-loc-action="collapse" aria-expanded="true" title="Show / hide this panel"><span class="caret">▾</span></button>
+    </div>
+    <div class="loc-body" data-pane="location">
       <div class="q">
         <div class="q-title"><span class="q-tag">Q1</span>Locate<code>locate(id)</code></div>
         <div class="q-out" data-out="q1"></div>
@@ -77,6 +81,41 @@
         <input type="search" placeholder="Find a place, e.g. near gallery-screen" aria-label="Find a place from a description" data-loc-input="find">
         <div class="q-out" data-out="find"></div>
       </div>
+    </div>
+    <div class="loc-body met-body" data-pane="metrics" hidden>
+      <p class="m-hint">Distance from <b>A</b> to <b>B</b> under three metrics (docs/SIMULATION_METRICS.md). Click an agent to make it A; click the ground to make that spot B.</p>
+      <div class="m-row">
+        <label class="m-pick"><span>A</span><select data-met="a" aria-label="A (from)"></select></label>
+        <button data-met-action="swap" title="Swap A and B" aria-label="Swap A and B">⇄</button>
+        <label class="m-pick"><span>B</span><select data-met="b" aria-label="B (to)"></select></label>
+      </div>
+      <div class="m-row m-opts">
+        <span class="seg" role="group" aria-label="Role used for A to B">
+          <button data-met-role="visitor">visitor</button><button data-met-role="staff">staff</button>
+        </span>
+        <label class="chk"><input type="checkbox" data-met="strict"> strict valve (no reset)</label>
+      </div>
+      <table class="m-table" data-out="m-table"></table>
+      <div class="m-notes" data-out="m-notes"></div>
+      <h4>Comparison <span>A → B vs B → A</span></h4>
+      <div class="m-chart" data-out="m-bars"></div>
+      <h4>Discrepancy map <span>every agent → B</span></h4>
+      <div class="m-chart" data-out="m-scatter"></div>
+      <p class="m-hint">Shaded corners: near by Euclidean but far by the other metric (top left), or the reverse (bottom right). Each agent has a ● for d_seq and a ■ for d_L.</p>
+      <h4>Inferred near B <span>normalised ≤ 0.2</span></h4>
+      <div data-out="m-occ"></div>
+      <h4>Far by one metric, near by another</h4>
+      <div data-out="m-disc"></div>
+      <h4>Show in the scene</h4>
+      <div class="m-toggles">
+        <label class="chk"><input type="checkbox" data-met-show="euclidean"><i class="sw" style="background:#3987e5"></i>Euclidean path</label>
+        <label class="chk"><input type="checkbox" data-met-show="seq"><i class="sw" style="background:#d95926"></i>d_seq route</label>
+        <label class="chk"><input type="checkbox" data-met-show="task"><i class="sw" style="background:#199e70"></i>d_L band</label>
+        <label class="chk"><input type="checkbox" data-met-show="case2">Case II: g1 ⇄ g2 arcs</label>
+        <label class="chk"><input type="checkbox" data-met-show="case3">Case III: petal at x</label>
+      </div>
+      <h4>Axioms</h4>
+      <div class="m-axioms" data-out="m-axioms"></div>
     </div>
   </section>
 
