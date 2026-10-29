@@ -54,6 +54,9 @@ class FloorPlan:
     """Room -> sequence node; None means "use the nearest hall" (the corridor)."""
     exhibits: dict[str, Location]
     exhibit_hall: dict[str, str] = field(default_factory=dict)
+    artworks: dict[str, Location] = field(default_factory=dict)
+    """One artwork per gallery, in gallery order: the exhibits plus the installations (PROXIMITY_RULES.md P1)."""
+    artwork_hall: dict[str, str] = field(default_factory=dict)
 
     def room_at(self, location: Location) -> str | None:
         """The first room (in plan order) containing `location`; door points lie on two rooms."""
@@ -150,7 +153,24 @@ def build_floorplan() -> FloorPlan:
         exhibits=exhibits,
     )
     plan.exhibit_hall = {name: plan.room_at(loc) for name, loc in exhibits.items()}
+    pieces = {**exhibits, **INSTALLATIONS}
+    halls = {name: plan.room_at(loc) for name, loc in pieces.items()}
+    order = sorted(pieces, key=lambda n: HALLS.index(halls[n]))
+    plan.artworks = {n: pieces[n] for n in order}
+    plan.artwork_hall = {n: halls[n] for n in order}
     return plan
+
+
+# PROXIMITY_RULES.md P1: the galleries without a mandatory exhibit each get an installation.
+INSTALLATIONS = {
+    "Installation g1": Location(6, 5.5),
+    "Installation g2": Location(18, 5.5),
+    "Installation g4": Location(32, 4),
+    "Installation g5": Location(40, 4),
+    "Installation g7": Location(32, 15),
+    "Installation g8": Location(24, 16.5),
+    "Installation g10": Location(8, 13.5),
+}
 
 
 EXHIBIT_RADIUS = 0.6
@@ -166,6 +186,8 @@ def build_exhibition() -> tuple[World, dict[str, ReferenceFrame], FloorPlan]:
         world.add_place(Place(name, rect, parent=building))
     for name, loc in plan.exhibits.items():
         world.add_place(Place(name, Circle(loc, EXHIBIT_RADIUS), parent=world.places[plan.exhibit_hall[name]]))
+    for name, loc in INSTALLATIONS.items():
+        world.add_place(Place(name, Circle(loc, EXHIBIT_RADIUS), parent=world.places[plan.artwork_hall[name]]))
 
     frames = {
         "g1-screen": ReferenceFrame("g1-screen", origin=(8, 0.4), rotation=90),

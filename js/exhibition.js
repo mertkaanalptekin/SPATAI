@@ -11,10 +11,26 @@ export const HALLS = Array.from({ length: 10 }, (_, i) => `Gallery ${i + 1}`);
 export const DOOR_WIDTH = 1.2;   // metres
 export const EXHIBIT_RADIUS = 0.6;
 
+// PROXIMITY_RULES.md P1: the galleries without a mandatory exhibit each get an installation.
+export const INSTALLATIONS = new Map([
+  ['Installation g1', new Location(6, 5.5)],
+  ['Installation g2', new Location(18, 5.5)],
+  ['Installation g4', new Location(32, 4)],
+  ['Installation g5', new Location(40, 4)],
+  ['Installation g7', new Location(32, 15)],
+  ['Installation g8', new Location(24, 16.5)],
+  ['Installation g10', new Location(8, 13.5)],
+]);
+
 export class FloorPlan {
   constructor({ rooms, doors, seqNodes, seqEdges, roomNode, exhibits }) {
     Object.assign(this, { rooms, doors, seqNodes, seqEdges, roomNode, exhibits });
     this.exhibitHall = new Map([...exhibits].map(([name, loc]) => [name, this.roomAt(loc)]));
+    // One artwork per gallery, in gallery order: the exhibits plus the installations (PROXIMITY_RULES.md P1).
+    const pieces = new Map([...exhibits, ...INSTALLATIONS]);
+    const order = [...pieces.keys()].sort((a, b) => HALLS.indexOf(this.roomAt(pieces.get(a))) - HALLS.indexOf(this.roomAt(pieces.get(b))));
+    this.artworks = new Map(order.map((n) => [n, pieces.get(n)]));
+    this.artworkHall = new Map(order.map((n) => [n, this.roomAt(pieces.get(n))]));
   }
 
   /** The first room (in plan order) containing `location`; door points lie on two rooms. */
@@ -118,6 +134,9 @@ export function buildExhibition() {
   for (const [name, rect] of plan.rooms) world.addPlace(new Place(name, rect, building));
   for (const [name, loc] of plan.exhibits) {
     world.addPlace(new Place(name, new Circle(loc, EXHIBIT_RADIUS), world.places.get(plan.exhibitHall.get(name))));
+  }
+  for (const [name, loc] of INSTALLATIONS) {
+    world.addPlace(new Place(name, new Circle(loc, EXHIBIT_RADIUS), world.places.get(plan.artworkHall.get(name))));
   }
 
   const frames = {

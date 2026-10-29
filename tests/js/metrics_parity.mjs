@@ -6,7 +6,8 @@ import { buildExhibition } from '../../js/exhibition.js';
 import {
   METRICS, REFERENCE_NODES, axiomReport, discrepancies, measure, occupancy, referenceRanges, seqNode, walk,
 } from '../../js/metrics.js';
-import { Circle, Location } from '../../js/spatial.js';
+import { Circle, Location, Visitor } from '../../js/spatial.js';
+import { approachPoint, artworkBreaches, nearestStaff, personalSpaceConflicts, stepBackPoint } from '../../js/proximity.js';
 
 const fin = (v) => (v === Infinity ? 'inf' : v);
 const region = (r) => (r instanceof Circle
@@ -21,6 +22,7 @@ function runMetricQueries(spec) {
     doors: [...plan.doors.values()].map((d) => [d.doorId, d.rooms, d.point, d.staffOnly]),
     edges: plan.seqEdges.map((e) => [e.src, e.dst, e.weight, e.kind, e.via, e.label]),
     exhibits: [...plan.exhibits].map(([n, l]) => [n, [l.x, l.y], plan.exhibitHall.get(n)]),
+    artworks: [...plan.artworks].map(([n, l]) => [n, [l.x, l.y], plan.artworkHall.get(n)]),
     shortcuts: plan.shortcuts.map((e) => e.label),
   };
   out.scene = {
@@ -67,6 +69,22 @@ function runMetricQueries(spec) {
     strict: occupancy(plan, world, t, ranges, true),
     discrepancies: discrepancies(plan, world, t, ranges).map((d) => [d.userId, d.nearMetric, d.farMetric, fin(d.nearValue), fin(d.farValue)]),
   }));
+  // Proximity rules (PROXIMITY_RULES.md P13): the same agent scenarios through both ports.
+  out.proximity = spec.proximity.map((agents) => {
+    for (const id of [...world.visitors.keys()]) world.remove(id);
+    for (const [id, x, y, vx, vy, role] of agents) world.addVisitor(new Visitor(id, new Location(x, y), { velocity: [vx, vy], role }));
+    const pt = (l) => [l.x, l.y];
+    return {
+      conflicts: personalSpaceConflicts(world).map((c) => [c.stopper, c.other, c.distance]),
+      breaches: artworkBreaches(plan, world).map((b) => {
+        const v = world.visitors.get(b.visitor);
+        const staff = nearestStaff(plan, world, v.position);
+        return [b.visitor, b.artwork, b.distance, staff,
+          staff ? pt(approachPoint(plan, world.visitors.get(staff).position, v.position)) : null,
+          pt(stepBackPoint(plan, b.artwork, v.position))];
+      }),
+    };
+  });
   return out;
 }
 

@@ -20,6 +20,9 @@ import { HALLS, buildExhibition } from './exhibition.js';
 import { walk } from './metrics.js';
 import { initMetrics } from './metrics-panel.js';
 import {
+  ARTWORK_DISTANCE_M, ArtworkGuard, PERSONAL_SPACE_M, REPLAN_AFTER_S, STAFF_STANDOFF_M, yields,
+} from './proximity.js';
+import {
   Circle, FRONT_HALF_ANGLE, Location, MAX_OCCUPANCY_FOR_POWER_ON, OFFSET_M, PROXIMITY_THRESHOLD_M,
   Visitor as ModelVisitor, WORLD_FRAME, normalizeAngle, relativeDirection, resolveDescription, shouldPowerOn,
 } from './spatial.js';
@@ -262,7 +265,8 @@ const velocityGroup = new THREE.Group();   // velocity arrows
 velocityGroup.visible = false;
 const placesGroup = new THREE.Group();     // zone boundary + named places
 const locGroup = new THREE.Group();        // location-question overlays (probe, frame axes, find marker)
-scene.add(relationGroup, velocityGroup, placesGroup, locGroup);
+const proxGroup = new THREE.Group();       // proximity rules: artwork guard rings, staff dispatch lines (P10)
+scene.add(relationGroup, velocityGroup, placesGroup, locGroup, proxGroup);
 
 const pickables = [];
 
@@ -591,6 +595,15 @@ class Visitor {
     this.target = new THREE.Vector3();
     this.dragging = false;
     this.track = null;             // location-event state, see trackLocation()
+    // Proximity (docs/PROXIMITY_RULES.md): mode is null (own business), 'duty' (staff on an
+    // artwork call), 'step' (visitor stepping back) or 'return' (staff going back to post).
+    this.mode = null;
+    this.post = anchored ? this.Position.clone() : null;
+    this.intent = new THREE.Vector3();   // where it wants to go this frame, before yielding
+    this.stopFor = null;                 // ID it is yielding to (P3)
+    this.blocked = 0;                    // seconds spent yielding (P4)
+    this.lastStopLog = -Infinity;
+    this.stopLogged = false;
 
     const color = new THREE.Color().setHSL(((n * 47) % 360) / 360, 0.65, 0.6);
     const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6 });
@@ -602,9 +615,16 @@ class Visitor {
     for (const m of [this.body, this.head]) { m.castShadow = true; m.userData.entity = this; pickables.push(m); }
     this.group.add(this.body, this.head);
 
-    this.label = makeLabel('visitor', 1.85);
+    this.label = makeLabel(visitorModel.role === 'staff' ? 'visitor staff' : 'visitor', 1.85);
     this.label.el.textContent = this.User_ID;
     this.group.add(this.label.obj);
+
+    // P10: a 0.5 m ring, so two rings overlap exactly when agents are closer than 1 m.
+    this.spaceMat = new THREE.MeshBasicMaterial({ color: 0x8592a3, transparent: true, opacity: 0.35, depthWrite: false });
+    this.spaceRing = new THREE.Mesh(new THREE.RingGeometry(PERSONAL_SPACE_M / 2 - 0.04, PERSONAL_SPACE_M / 2, 40), this.spaceMat);
+    this.spaceRing.rotation.x = -Math.PI / 2;
+    this.spaceRing.position.y = 0.045;
+    this.group.add(this.spaceRing);
     this.group.position.copy(this.Position);
     scene.add(this.group);
 
@@ -624,8 +644,13 @@ class Visitor {
       const dir = d.forward.clone().applyAxisAngle(UP, rand(-0.9, 0.9));
       goal.copy(d.Position).addScaledVector(dir, rand(0.9, 2.2));
     } else {
-      const r = PLAN.rooms.get(pick(WANDER_ROOMS));
-      goal.copy(toThree(new Location(rand(r.xMin + 0.8, r.xMax - 0.8), rand(r.yMin + 0.8, r.yMax - 0.8))));
+      // P12: never aim within 1.3 m of an artwork.
+      for (let tries = 0; tries < 12; tries++) {
+        const r = PLAN.rooms.get(pick(WANDER_ROOMS));
+        const l = new Location(rand(r.xMin + 0.8, r.xMax - 0.8), rand(r.yMin + 0.8, r.yMax - 0.8));
+        goal.copy(toThree(l));
+        if ([...PLAN.artworks.values()].every((a) => a.distanceTo(l) >= 1.3)) break;
+      }
     }
     clampToFloor(goal);
     // Walk there through the doors rather than through the walls (R15).
@@ -634,22 +659,98 @@ class Visitor {
     this.target.copy(this.waypoints.shift());
   }
 
+  /** Walk to `goal` through the doors (staff calls, returning to post). */
+  routeTo(goal, mode) {
+    const route = walk(PLAN, toModel(this.Position), toModel(goal), this.model.role);
+    this.waypoints = route.value === Infinity ? [goal.clone()] : route.path.slice(1).map(([x, y]) => worldXYToThree(x, y));
+    this.target.copy(this.waypoints.shift());
+    this.goal = goal.clone();
+    this.mode = mode;
+    this.pause = 0;
+  }
+
+  /** P8: walk straight back to `goal` (it is inside the same hall). */
+  stepBackTo(goal) {
+    this.stepDone = false;
+    this.waypoints = [];
+    this.target.copy(goal);
+    this.goal = goal.clone();
+    this.mode = 'step';
+    this.pause = 0;
+  }
+
+  /** P5: staff on a call and visitors stepping back follow the guard procedure, not personal space. */
+  get exempt() { return this.dragging || this.mode === 'duty' || this.mode === 'step'; }
+
   update(dt, others) {
-    if (this.dragging || this.anchored) { this.Velocity.set(0, 0, 0); return; }
+    if (this.dragging || (this.anchored && !this.mode)) { this.Velocity.set(0, 0, 0); this.intent.set(0, 0, 0); this.stopFor = null; return; }
     tmpDesired.set(0, 0, 0);
     if (this.pause > 0) {
       this.pause -= dt;
     } else {
       tmpTo.subVectors(this.target, this.Position).setY(0);
       const d = tmpTo.length();
+      const speed = this.mode === 'step' ? 0.7 : this.mode === 'duty' ? Math.max(this.speed, 1.2) : this.speed;
       if (d < 0.25 && this.waypoints?.length) {
         this.target.copy(this.waypoints.shift());   // through a door, on to the next leg
-      } else if (d < 0.25) {
-        this.pause = rand(1.5, 6);
-        this.pickTarget();
+      } else if (d < (this.mode === 'step' ? 0.03 : 0.25)) {
+        if (this.mode === 'step' && this.stepDone) {
+          // P8: the call is over and the step back is complete
+          this.mode = null; this.stepDone = false;
+          if (this.anchored) this.post = this.Position.clone(); else this.pause = 1.5;
+        } else if (this.mode === 'duty' || this.mode === 'step') {
+          // hold here until the guard moves on (P8/P9)
+        } else if (this.mode === 'return' && this.post) {
+          this.mode = null;                        // back at post: stand again
+        } else {
+          this.mode = null;
+          this.pause = rand(1.5, 6);
+          this.pickTarget();
+        }
       } else {
-        tmpDesired.copy(tmpTo).multiplyScalar(this.speed / d);
+        tmpDesired.copy(tmpTo).multiplyScalar(Math.min(speed, (d / 0.25) * speed) / d);
       }
+    }
+    this.intent.copy(tmpDesired);
+
+    // P2-P4: personal space. Yield if closer than 1 m and closing in faster than the other.
+    const was = this.stopFor;
+    this.stopFor = null;
+    if (!this.exempt) {
+      const me = [this.Position.x + CX, CY - this.Position.z], mv = [tmpDesired.x, -tmpDesired.z];
+      for (const o of others) {
+        if (o === this || o.exempt) continue;
+        const op = [o.Position.x + CX, CY - o.Position.z];
+        if (Math.abs(op[0] - me[0]) >= PERSONAL_SPACE_M || Math.abs(op[1] - me[1]) >= PERSONAL_SPACE_M) continue;
+        if (yields(this.User_ID, me, mv, o.User_ID, op, [o.intent.x, -o.intent.z])) { this.stopFor = o; break; }
+      }
+    }
+    if (this.stopFor) {
+      tmpDesired.set(0, 0, 0);
+      this.blocked += dt;
+      if (this.blocked >= REPLAN_AFTER_S && !this.mode && !this.anchored) {
+        // P4: pick a new destination whose first leg doesn't close in on the agent we yield to.
+        this.blocked = 0;
+        const me = [this.Position.x + CX, CY - this.Position.z];
+        const other = [this.stopFor.Position.x + CX, CY - this.stopFor.Position.z];
+        for (let tries = 0; tries < 8; tries++) {
+          this.pickTarget();
+          const leg = [this.target.x - this.Position.x, -(this.target.z - this.Position.z)];
+          if (!yields(this.User_ID, me, leg, this.stopFor.User_ID, other, [this.stopFor.intent.x, -this.stopFor.intent.z])) break;
+        }
+      }
+      if (!was) { this.stopTime = 0; this.stopLogged = false; }
+      this.stopTime = (this.stopTime ?? 0) + dt;
+      // P11: log a stop once it has lasted 0.5 s, at most one line per agent every 5 s.
+      if (!this.stopLogged && this.stopTime >= 0.5 && simTime - this.lastStopLog >= 5) {
+        const d = Math.hypot(this.Position.x - this.stopFor.Position.x, this.Position.z - this.stopFor.Position.z);
+        this.stopLogged = true;
+        this.lastStopLog = simTime;
+        log(`<b>${esc(this.User_ID)}</b> stops: ${d.toFixed(2)} m from ${esc(this.stopFor.User_ID)} (personal space)`, 'prox');
+      }
+    } else {
+      this.blocked = 0;
+      if (was && this.stopLogged) { log(`<b>${esc(this.User_ID)}</b> walks on`, 'prox'); this.stopLogged = false; }
     }
     // Simple separation so crowds do not overlap
     for (const o of others) {
@@ -664,7 +765,8 @@ class Visitor {
         tmpDesired.z += (dz / d) * push;
       }
     }
-    this.Velocity.lerp(tmpDesired, Math.min(1, dt * 4));
+    if (this.stopFor) this.Velocity.copy(tmpDesired);   // a stop is a stop, not a slow drift
+    else this.Velocity.lerp(tmpDesired, Math.min(1, dt * 4));
     this.Position.addScaledVector(this.Velocity, dt);
     clampToFloor(this.Position);
     this.group.position.copy(this.Position);
@@ -696,6 +798,8 @@ class Visitor {
     this.body.material.dispose();
     this.head.material.dispose();
     this.arrow.dispose();
+    this.spaceRing.geometry.dispose();
+    this.spaceMat.dispose();
     if (model.visitors.get(this.User_ID) === this.model) model.remove(this.User_ID);
     visitorById.delete(this.User_ID);
   }
@@ -799,7 +903,28 @@ const placeViews = new Map();   // name → { place, fillMat, lineMat, baseOpaci
     label.el.style.color = color;
     label.el.style.borderColor = color + '99';
     label.el.title = `Locate ${place.name}`;
-    label.el.addEventListener('click', () => { setLocSubject(place.name); renderLocation(); });
+    // A press on a label over a visitor or display goes to that object: the label is
+    // flat on the floor where agents stand, so it must not stop you grabbing them.
+    label.el.addEventListener('pointerdown', (e) => {
+      label.forwarded = false;
+      if (e.button !== 0) return;
+      const ent = pickAt(e);
+      if (!ent || ent.kind === 'zone') return;
+      label.forwarded = true;
+      if (ent.kind === 'visitor') {
+        canvas.dispatchEvent(new PointerEvent('pointerdown', {
+          bubbles: true, cancelable: true, clientX: e.clientX, clientY: e.clientY,
+          pointerId: e.pointerId, pointerType: e.pointerType, button: 0, buttons: 1, isPrimary: true,
+        }));
+      } else {
+        select(ent);
+      }
+    });
+    label.el.addEventListener('click', () => {
+      if (label.forwarded) { label.forwarded = false; return; }
+      if (metricsActive()) { metricsUI.setB(`place:${place.name}`); return; }   // Metrics tab: the place becomes B
+      setLocSubject(place.name); renderLocation();
+    });
     // The label sits on the ground it names, so hovering it still describes that ground (Q4).
     label.el.addEventListener('pointermove', (e) => hoverAt(e));
     label.el.addEventListener('pointerleave', hideTip);
@@ -875,9 +1000,37 @@ function spawnCrowd(zone, count = 10) {
 // ---------------------------------------------------------------------------
 // Simulation step: movement → relationships → rule evaluation
 // ---------------------------------------------------------------------------
+const guard = new ArtworkGuard();
+let guardView = { goTo: new Map(), stepBack: new Map() };
+
+/** P7-P9: run the artwork guard and carry out its orders. */
+function runGuard() {
+  const orders = guard.update(PLAN, model);
+  for (const e of orders.events) log(esc(e.text), 'prox');
+  for (const [id, goal] of orders.goTo) {
+    const s = visitorById.get(id);
+    const g = toThree(goal);
+    if (s && (s.mode !== 'duty' || !s.goal || s.goal.distanceTo(g) > 0.4)) s.routeTo(g, 'duty');
+  }
+  for (const [id, goal] of orders.stepBack) {
+    const v = visitorById.get(id);
+    if (v && v.mode !== 'step') v.stepBackTo(toThree(goal));
+  }
+  for (const id of orders.release) {
+    const s = visitorById.get(id);
+    if (!s) continue;
+    if (s.post) s.routeTo(s.post, 'return');
+    else { s.mode = null; s.pickTarget(); }
+  }
+  // A visitor whose call ended finishes the step back, then carries on (see update()).
+  for (const v of visitors) if (v.mode === 'step' && !orders.stepBack.has(v.User_ID)) v.stepDone = true;
+  guardView = orders;
+}
+
 function step(dt) {
   for (const v of visitors) v.update(dt, visitors);
   for (const v of visitors) v.syncModel();
+  runGuard();
 
   // Visitor —enters→ Spatial Zone, Occupancy, Dwell_Time (membership comes from the model)
   for (const v of visitors) {
@@ -1253,6 +1406,87 @@ function updateFindMarker(t) {
 }
 
 // ---------------------------------------------------------------------------
+// Proximity visuals (docs/PROXIMITY_RULES.md P10)
+// ---------------------------------------------------------------------------
+const guardRings = new Map();   // artwork → { mat }
+for (const [name, loc] of PLAN.artworks) {
+  const mat = new THREE.MeshBasicMaterial({ color: 0x8592a3, transparent: true, opacity: 0.55, depthWrite: false });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(ARTWORK_DISTANCE_M - 0.05, ARTWORK_DISTANCE_M, 56), mat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.copy(toThree(loc, 0.05));
+  proxGroup.add(ring);
+  guardRings.set(name, { mat });
+}
+const dispatchLines = new THREE.LineSegments(
+  new THREE.BufferGeometry(),
+  new THREE.LineDashedMaterial({ color: 0xffb547, dashSize: 0.35, gapSize: 0.2 })
+);
+dispatchLines.frustumCulled = false;
+proxGroup.add(dispatchLines);
+
+function updateProximityVisuals(t) {
+  const breached = new Set([...guard.calls.values()].map((c) => c.artwork));
+  for (const [name, { mat }] of guardRings) {
+    const on = breached.has(name);
+    mat.color.setHex(on ? 0xff5d6c : 0x8592a3);
+    mat.opacity = on ? 0.65 + Math.sin(t * 6) * 0.3 : 0.45;
+  }
+  const pts = [];
+  for (const [vid, c] of guard.calls) {
+    const v = visitorById.get(vid), s = c.staff && visitorById.get(c.staff);
+    if (v && s && c.phase === 'dispatched') pts.push(s.Position.x, 0.5, s.Position.z, v.Position.x, 0.5, v.Position.z);
+  }
+  dispatchLines.geometry.dispose();
+  dispatchLines.geometry = new THREE.BufferGeometry();
+  dispatchLines.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  dispatchLines.computeLineDistances();
+  for (const v of visitors) {
+    const stopped = !!v.stopFor;
+    v.spaceMat.color.setHex(stopped ? 0xffb547 : v.mode === 'step' ? 0xff5d6c : v.mode === 'duty' ? 0x38d0ff : 0x8592a3);
+    v.spaceMat.opacity = stopped || v.mode ? 0.95 : 0.35;
+    const text = `${v.User_ID}${stopped ? ' ⏸' : ''}${v.mode === 'duty' ? ' → call' : ''}${v.mode === 'step' ? ' ↩' : ''}`;
+    if (v.label.el.textContent !== text) v.label.el.textContent = text;
+  }
+}
+
+/** Inspector line: what the proximity rules are doing with this agent. */
+function proximityState(e) {
+  if (e.stopFor) return `<span class="warn">stopped</span> for ${esc(e.stopFor.User_ID)} (personal space)`;
+  if (e.mode === 'step') return '<span class="no">stepping back</span> from an artwork';
+  if (e.mode === 'duty') {
+    const call = [...guard.calls].find(([, c]) => c.staff === e.User_ID);
+    return call ? `on call: ${esc(call[0])} at ${esc(call[1].artwork)}` : 'on call';
+  }
+  if (e.mode === 'return') return 'returning to post';
+  return 'clear';
+}
+
+const proxEvalEl = document.getElementById('prox-eval');
+function renderProximityEval() {
+  // P11: pairs closer than 1 m, who is stopped, and the open artwork calls.
+  let pairs = 0;
+  for (let i = 0; i < visitors.length; i++) {
+    for (let j = i + 1; j < visitors.length; j++) {
+      const a = visitors[i].model.position, b = visitors[j].model.position;
+      if (a.distanceTo(b) < PERSONAL_SPACE_M) pairs++;
+    }
+  }
+  const stopped = visitors.filter((v) => v.stopFor).map((v) => `${esc(v.User_ID)} ⏸ for ${esc(v.stopFor.User_ID)}`);
+  const space = pairs
+    ? `<span class="warn">${pairs} pair${pairs > 1 ? 's' : ''} &lt; 1 m</span> · ${stopped.length ? stopped.join(', ') : 'nobody closing in, so nobody stops'}`
+    : '<span class="ok">every pair ≥ 1 m apart</span>';
+  const calls = [...guard.calls].map(([vid, c]) => {
+    const v = visitorById.get(vid);
+    const d = v ? v.model.position.distanceTo(PLAN.artworks.get(c.artwork)).toFixed(1) : '?';
+    const what = c.phase === 'waiting' ? 'waiting for free staff' : c.phase === 'dispatched' ? `${esc(c.staff)} on the way` : `${esc(c.staff)} there, stepping back`;
+    return `<span class="no">${esc(vid)} ${d} m from ${esc(c.artwork)}</span> → ${what}`;
+  });
+  const html = `<div class="rule-row"><b>Personal space</b><span>${space}</span></div>` +
+    `<div class="rule-row"><b>Artwork</b><span>${calls.length ? calls.join('<br>') : `<span class="ok">every visitor ≥ ${ARTWORK_DISTANCE_M} m from the artworks</span>`}</span></div>`;
+  if (proxEvalEl.innerHTML !== html) proxEvalEl.innerHTML = html;
+}
+
+// ---------------------------------------------------------------------------
 // Per-frame visuals
 // ---------------------------------------------------------------------------
 const okColor = new THREE.Color(0x3fd68a);
@@ -1309,6 +1543,7 @@ function updateVisuals(dt, t) {
   document.body.classList.toggle('metrics-mode', metricsMode);
   updateFrameOverlay();
   updateFindMarker(t);
+  updateProximityVisuals(t);
 
   if (selected && selected.kind !== 'zone') {
     selRing.visible = true;
@@ -1368,7 +1603,7 @@ function renderInspector(full = false) {
 
     if (e.kind === 'visitor') {
       html += `<div class="attrs">${attrRow('User_ID', 'User_ID')}${attrRow('Position', 'Position')}${
-        attrRow('Velocity', 'Velocity')}${attrRow('Dwell_Time', 'Dwell_Time')}${attrRow('Role', 'Role')}${attrRow('Place', 'Place', true)}</div>
+        attrRow('Velocity', 'Velocity')}${attrRow('Dwell_Time', 'Dwell_Time')}${attrRow('Role', 'Role')}${attrRow('Place', 'Place', true)}${attrRow('Proximity', 'Prox', true)}</div>
         <h4>Relationships</h4><div data-field="rel"></div>
         <h4>Rule context</h4><div data-field="ctx"></div>
         <div class="btns"><button data-action="remove-visitor" class="danger">Remove visitor</button></div>
@@ -1411,6 +1646,7 @@ function renderInspector(full = false) {
     f.Velocity = `(${f2(m.velocity[0])}, ${f2(m.velocity[1])}) · ${e.Velocity.length().toFixed(2)} m/s`;
     f.Dwell_Time = `${e.Dwell_Time.toFixed(1)} s`;
     f.Role = m.role === 'staff' ? '<span class="warn">staff</span> (may use staff doors)' : 'visitor';
+    f.Prox = proximityState(e);
     f.Place = esc(model.placeAt(m.position)?.name ?? '—');
     f.rel = e.zone ? `${chip(e)}<span class="rel">enters</span>${chip(e.zone)}` : '<span class="no">outside all zones</span>';
     const nd = model.nearestDisplay(m.position);
@@ -1535,6 +1771,13 @@ const actions = {
     const v = spawnVisitor(toThree(new Location(w.x, w.y + rand(-1.5, 1.5))));
     if (v) log(`${v.User_ID} arrives at the entrance`, 'action');
   },
+  'add-staff'() {
+    let n = 1;
+    while (model.visitors.has(`S-${String(n).padStart(3, '0')}`)) n++;
+    const c = PLAN.centre('Checkout');
+    const s = spawnVisitor(toThree(new Location(c.x + rand(-0.8, 0.8), c.y + rand(-2, 2))), { id: `S-${String(n).padStart(3, '0')}`, role: 'staff' });
+    if (s) log(`${s.User_ID} (staff) starts a shift at the Checkout`, 'action');
+  },
   'add-crowd'() {
     spawnCrowd(contextZone() ?? zones[0]);
   },
@@ -1577,6 +1820,11 @@ const actions = {
     const show = labelRenderer.domElement.style.display === 'none';
     labelRenderer.domElement.style.display = show ? '' : 'none';
     btn?.classList.toggle('on', show);
+  },
+  'toggle-proximity'(btn) {
+    proxGroup.visible = !proxGroup.visible;
+    for (const v of visitors) v.spaceRing.visible = proxGroup.visible;
+    btn?.classList.toggle('on', proxGroup.visible);
   },
   'toggle-places'(btn) {
     placesGroup.visible = !placesGroup.visible;
@@ -1783,6 +2031,7 @@ canvas.addEventListener('pointerup', (e) => {
     dragging.dragging = false;
     dragging.pause = 10;            // linger where dropped so the rule outcome is visible
     dragging.target.copy(dragging.Position);
+    if (dragging.anchored) dragging.post = dragging.Position.clone();   // its new post (P9)
     canvas.releasePointerCapture(e.pointerId);
     canvas.style.cursor = 'grab';
     dragging = null;
@@ -1832,6 +2081,7 @@ window.addEventListener('resize', () => {
 // ---------------------------------------------------------------------------
 function loadDemo() {
   for (const v of visitors) v.dispose();
+  guard.calls.clear();
   // The model starts with buildExhibition()'s agents; they are re-added below as scene objects.
   for (const id of [...model.visitors.keys()]) model.remove(id);
   visitors = [];
@@ -1897,6 +2147,7 @@ function animate() {
     uiTimer = 0.2;
     refreshLabels();
     renderRuleEval();
+    renderProximityEval();
     renderInspector();
     renderLocation();
     metricsUI.render(0.2);
@@ -1910,7 +2161,7 @@ animate();
 
 // Read-only handle for tests and the console.
 window.spatai = {
-  model, frames: FRAMES, plan: PLAN, loc, describeText, visitors: () => visitors, displays, toThree, toModel,
+  model, frames: FRAMES, plan: PLAN, loc, describeText, visitors: () => visitors, displays, toThree, toModel, guard,
   metrics: () => metricsUI,
   /** Screen pixel of model point (x, y) at height h, e.g. to click it from a test. */
   screenOf(x, y, h = 0) {

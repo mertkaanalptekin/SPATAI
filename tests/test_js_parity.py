@@ -167,9 +167,9 @@ class JsParityTests(unittest.TestCase):
         self.assertEqual(self.py["evaluate_rules"], ["welcome-screen"])
 
     def test_js_only_helpers(self):
-        """Run the Node tests for helpers with no Python counterpart (text resolution)."""
+        """Run the Node tests for code with no Python counterpart (text lookup, ArtworkGuard)."""
         proc = subprocess.run(
-            [NODE, "--test", str(ROOT / "tests" / "js" / "spatial.test.mjs")],
+            [NODE, "--test", str(ROOT / "tests" / "js" / "spatial.test.mjs"), str(ROOT / "tests" / "js" / "proximity.test.mjs")],
             capture_output=True, text=True, timeout=60,
         )
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
@@ -188,6 +188,31 @@ METRIC_SPEC = {
     + [[12, 2.5], [12, 6], [4, 4], [2, 9.5], [25, 9.5], [24, 2], [44, 19], [0, 0]],
     "targets": [[8, 4], [2, 4], [2, 15], [41, 17], [16, 4]],
 }
+
+
+def _proximity_scenarios(n=40, agents=7, seed=7):
+    """Agents scattered near artworks and each other, with random intents (PROXIMITY_RULES.md P13)."""
+    import random
+    from spatai.exhibition import build_floorplan
+
+    rng = random.Random(seed)
+    arts = list(build_floorplan().artworks.values())
+    out = []
+    for _ in range(n):
+        scen = []
+        for i in range(agents):
+            a = rng.choice(arts)
+            x, y = a.x + rng.uniform(-1.6, 1.6), a.y + rng.uniform(-1.6, 1.6)
+            if i and rng.random() < 0.5:   # put some agents right next to the previous one
+                x, y = scen[-1][1] + rng.uniform(-0.9, 0.9), scen[-1][2] + rng.uniform(-0.9, 0.9)
+            x, y = min(43.6, max(0.4, x)), min(18.6, max(0.4, y))
+            scen.append([f"a{i}", x, y, rng.choice([0, rng.uniform(-1.2, 1.2)]), rng.uniform(-1.2, 1.2),
+                         "staff" if rng.random() < 0.3 else "visitor"])
+        out.append(scen)
+    return out
+
+
+METRIC_SPEC["proximity"] = _proximity_scenarios()
 
 
 def _fin(v):
@@ -211,6 +236,7 @@ def run_metric_queries(spec):
         "doors": [[d.door_id, list(d.rooms), list(d.point), d.staff_only] for d in plan.doors.values()],
         "edges": [[e.src, e.dst, e.weight, e.kind, list(e.via), e.label] for e in plan.seq_edges],
         "exhibits": [[n, [l.x, l.y], plan.exhibit_hall[n]] for n, l in plan.exhibits.items()],
+        "artworks": [[n, [l.x, l.y], plan.artwork_hall[n]] for n, l in plan.artworks.items()],
         "shortcuts": [e.label for e in plan.shortcuts],
     }}
     out["scene"] = {
@@ -252,6 +278,27 @@ def run_metric_queries(spec):
         "discrepancies": [[d.user_id, d.near_metric, d.far_metric, _fin(d.near_value), _fin(d.far_value)]
                           for d in M.discrepancies(plan, world, t, ranges)],
     } for t in targets]
+
+    from spatai import Visitor
+    from spatai import proximity as P
+
+    out["proximity"] = []
+    for agents in spec["proximity"]:
+        for uid in list(world.visitors):
+            world.remove(uid)
+        for uid, x, y, vx, vy, role in agents:
+            world.add_visitor(Visitor(uid, Location(x, y), velocity=(vx, vy), role=role))
+        breaches = []
+        for b in P.artwork_breaches(plan, world):
+            v = world.visitors[b.visitor]
+            staff = P.nearest_staff(plan, world, v.position)
+            ap = P.approach_point(plan, world.visitors[staff].position, v.position) if staff else None
+            sb = P.step_back_point(plan, b.artwork, v.position)
+            breaches.append([b.visitor, b.artwork, b.distance, staff, [ap.x, ap.y] if ap else None, [sb.x, sb.y]])
+        out["proximity"].append({
+            "conflicts": [[c.stopper, c.other, c.distance] for c in P.personal_space_conflicts(world)],
+            "breaches": breaches,
+        })
     return out
 
 
@@ -279,6 +326,11 @@ class JsMetricParityTests(unittest.TestCase):
     def test_grid_points(self):
         for i, (py, js) in enumerate(zip(self.py["points"], self.js["points"])):
             self.assertSame(py, js, f"points[{i}] at {METRIC_SPEC['points'][i]}")
+
+    def test_proximity_rules(self):
+        self.assertSame(self.py["proximity"], self.js["proximity"], "proximity")
+        self.assertGreater(sum(len(s["conflicts"]) for s in self.py["proximity"]), 20)
+        self.assertGreater(sum(len(s["breaches"]) for s in self.py["proximity"]), 20)
 
     def test_ranges_axioms_inference(self):
         for key in ["ranges", "axioms", "inference"]:

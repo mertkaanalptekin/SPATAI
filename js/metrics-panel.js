@@ -258,7 +258,7 @@ export function initMetrics(ctx) {
   // -------------------------------------------------------------------------
   // Pickers
   // -------------------------------------------------------------------------
-  const placeOptions = [ENTRANCE, ...HALLS, 'Central Corridor', CHECKOUT, ...plan.exhibits.keys()];
+  const placeOptions = [ENTRANCE, ...HALLS, 'Central Corridor', CHECKOUT, ...(plan.artworks ?? plan.exhibits).keys()];
 
   function locationOf(key) {
     if (key === '@point') return state.point;
@@ -531,6 +531,7 @@ export function initMetrics(ctx) {
       }
     },
     setPoint(locn) { state.point = new Location(locn.x, locn.y); agentIds = ''; state.b = '@point'; render(0); },
+    setB(key) { state.b = key; render(0); },
     setA(userId) { state.a = `agent:${userId}`; setRoleFromA(); render(0); },
     reset() {
       Object.assign(state, { a: 'agent:bob', b: 'place:Gallery 1', point: null, role: 'visitor', strict: false });

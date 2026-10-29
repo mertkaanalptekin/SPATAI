@@ -25,6 +25,7 @@
       <button data-action="add-visitor" title="Spawn a visitor at the lobby entrance">＋ Visitor</button>
       <button data-action="add-crowd" title="Spawn 10 visitors in the selected zone (default: exhibition)">＋10 Crowd</button>
       <button data-action="remove-visitor" title="Remove the selected visitor (or the most recent one)">− Visitor</button>
+      <button data-action="add-staff" title="Add a staff member at the Checkout; staff answer artwork calls">＋ Staff</button>
     </div>
 
     <div class="group">
@@ -39,6 +40,7 @@
       <button data-action="toggle-velocity" class="toggle" title="Show visitor velocity vectors">Velocity</button>
       <button data-action="toggle-labels" class="toggle on" title="Show entity labels">Labels</button>
       <button data-action="toggle-places" class="toggle on" title="Show the zone boundary and named places">Places</button>
+      <button data-action="toggle-proximity" class="toggle on" title="Show personal-space rings, artwork guard rings and staff calls">Proximity</button>
       <button data-action="reset-camera" title="Reset the camera">⌂ Camera</button>
     </div>
 
@@ -120,12 +122,19 @@
   </section>
 
   <section id="rules" class="panel">
+    <div class="rules-top">
     <h3>Rule engine</h3>
+    <div class="rule-text prox-rules">
+      Personal space: two agents closer than <b>1 m</b> → the one closing in faster <code>stops</code>.<br>
+      Artwork: a visitor closer than <b>1 m</b> → the nearest <code>staff</code> comes over and the visitor <code>steps back</code>.
+    </div>
+    <div id="prox-eval"></div>
     <div class="rule-text">
       IF <code>Visitor.Position</code> within <b>2.5 m</b> of <code>Display.Position</code>
       AND <code>Zone.Occupancy</code> &lt; <b>20</b> → <code>Power_State = ON</code>
     </div>
     <div id="rule-eval"></div>
+    </div>
     <h3>Event log</h3>
     <ol id="log"></ol>
   </section>

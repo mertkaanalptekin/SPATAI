@@ -117,6 +117,15 @@ ranges = M.reference_ranges(plan)
 M.discrepancies(plan, world, g1, ranges)     # bob: near by euclidean, far by seq, ...
 ```
 
+## Proximity rules
+
+[docs/PROXIMITY_RULES.md](docs/PROXIMITY_RULES.md) specifies two rules (P1–P13). Each gallery holds one artwork: the exhibits l1–l3 in Galleries 3, 6 and 9, and an installation in each of the other seven.
+
+- **Personal space.** When two agents are closer than **1 m** and at least one of them is closing in, the one closing in faster stops; the other keeps wandering. On a tie, the agent whose ID sorts later stops. If neither is closing in, they are already parting, so nobody stops. A stopped agent walks on once it is clear. If it is still blocked after 2 s, it picks a new destination that leads away.
+- **Artwork proximity.** When a visitor (not staff) comes closer than **1 m** to an artwork, the nearest free staff member, by walking distance, comes over. They stop 1.3 m from the visitor, outside the visitor's personal space. The visitor then steps back to 1.6 m from the artwork, and the staff member returns to their post. If the visitor leaves on their own first, the call is cancelled. If no staff member is free, the call waits, and the most urgent breach is served first.
+
+The rules are pure functions in `spatai/proximity.py`, ported to `js/proximity.js`. `ArtworkGuard` in `js/proximity.js` runs the staff calls in the page.
+
 ## Web simulation
 
 The **Spatial AI Neighborhood** page shows the model as a full-window three.js scene. It is published with GitHub Pages at <https://mertkaanalptekin.github.io/SPATAI/>.
@@ -146,7 +155,8 @@ three.js r160 loads from the jsDelivr CDN through an import map, so there is no 
 | **Spatial Zone** | The exhibition's purple floor and outline, with a floating node. `Ambient_Light` (lux) drives its ceiling light. |
 | **Place** | Labelled, semi-transparent ground regions: the ten galleries, Entrance, Checkout, the corridor, the reset passage and the exhibits l1–l3. Partition walls stand on every room boundary, with gaps at the doors. Each forward door carries a check-valve glyph (▶\|) pointing the allowed way, and the S1–S3 shortcuts are drawn and labelled. **Places** toggles the layer. |
 | **Smart Display** | Four kiosk screens (`g1-screen`, `g2-screen`, `g6-screen`, `g10-screen`) with a facing arrow, a ±45° "in front" wedge and a 2.5 m ring showing the rule radius. Both are coloured by the rule state. |
-| **Visitor** | A walking figure. alice, bob, carol and sam (staff) stand where the spec puts them until you drag them. Visitors you add wander from room to room through the doors. |
+| **Visitor** | A walking figure. alice, bob, carol and sam (staff) stand where the spec puts them until you drag them. Visitors you add wander from room to room through the doors. Each agent has a 0.5 m ring, so two rings overlap exactly when two agents are closer than 1 m. A stopped agent's ring turns amber and its label shows ⏸. Staff labels are amber. |
+| **Artwork** | One per gallery, with a 1 m guard ring that turns red while a visitor is too close. A dashed line joins a dispatched staff member to their visitor. **Proximity** toggles these overlays. |
 
 The relationships (toggle with **Relations**):
 
@@ -185,13 +195,15 @@ The **Event log** also records location events, such as "alice entered Gallery 2
 
 ### Rule and action
 
-The rule above is evaluated every frame, and the **Rule engine** panel shows each condition live. A green ring means the rule is satisfied. A red ring means a visitor is in range but the zone is at capacity. To keep the demo readable, a display returns to `OFF` 3 s after the rule stops matching, and its `Status` shows "Cooling down" in the meantime. **`Launch_Media()`** only works on a display that is ON.
+The **Rule engine** panel opens with the two proximity rules and their live state: pairs closer than 1 m and who has stopped, then each open artwork call and where it stands. The event log records "bob stops: 0.97 m from carol (personal space)" (once a stop has lasted 0.5 s), "bob walks on", "carol is 0.7 m from Installation g8 → sam dispatched", "sam reached carol; carol steps back from Installation g8", and "carol is 1.6 m from Installation g8 → sam returns to post". The inspector shows each agent's proximity state.
+
+The power-on rule above is evaluated every frame, and the panel shows each condition live. A green ring means the rule is satisfied. A red ring means a visitor is in range but the zone is at capacity. To keep the demo readable, a display returns to `OFF` 3 s after the rule stops matching, and its `Status` shows "Cooling down" in the meantime. **`Launch_Media()`** only works on a display that is ON.
 
 ### Controls
 
-- **Visitor**: `＋ Visitor` spawns at the Entrance, `＋10 Crowd` adds ten wandering visitors to the selected zone (default exhibition), and `− Visitor` removes the selected or most recent visitor.
+- **Visitor**: `＋ Visitor` spawns at the Entrance, `＋10 Crowd` adds ten wandering visitors to the selected zone (default exhibition), `− Visitor` removes the selected or most recent visitor, and `＋ Staff` adds a staff member at the Checkout, who wanders until called to an artwork.
 - **Smart Display**: `Launch_Media()` and `Default loop`.
-- **View**: toggles for Relations, Velocity, Labels and Places, and a camera reset.
+- **View**: toggles for Relations, Velocity, Labels, Places and Proximity, and a camera reset.
 - **Simulation**: pause or resume (Space), and reset to the spec's starting scene.
 - **In the scene**: click to inspect or probe, hover to describe, drag visitors, right-drag to pan, and scroll to zoom.
 
@@ -201,7 +213,7 @@ The rule above is evaluated every frame, and the **Rule engine** panel shows eac
 python3 -m unittest -v
 ```
 
-This runs the Python tests. When Node.js is installed, it also runs `tests/test_js_parity.py`. That test sends the same queries through Python and through `js/spatial.js` (`tests/js/parity.mjs`) and fails on any difference. The queries cover every 0.5 m point across and around the lobby, the Reception Desk circle, nested rotated frames and the rule. `tests/test_metrics.py` covers the floor plan and the metrics, one test per spec requirement. The parity test also compares the exhibition, every metric over all reference pairs for both roles and both valve modes, a 2 m grid of points, the normalisation ranges, the axiom report and the inference results. It also runs the Node tests for the page-only text lookup:
+This runs the Python tests. When Node.js is installed, it also runs `tests/test_js_parity.py`. That test sends the same queries through Python and through `js/spatial.js` (`tests/js/parity.mjs`) and fails on any difference. The queries cover every 0.5 m point across and around the lobby, the Reception Desk circle, nested rotated frames and the rule. `tests/test_metrics.py` covers the floor plan and the metrics, and `tests/test_proximity.py` covers the proximity rules, with tests keyed to the spec requirements. The parity test also runs 40 random agent scenarios through both proximity ports, and `tests/js/proximity.test.mjs` tests the staff-call state machine. The parity test also compares the exhibition, every metric over all reference pairs for both roles and both valve modes, a 2 m grid of points, the normalisation ranges, the axiom report and the inference results. It also runs the Node tests for the page-only text lookup:
 
 ```
 node --test tests/js/spatial.test.mjs
