@@ -19,6 +19,7 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 import { HALLS, buildExhibition } from './exhibition.js';
 import { walk } from './metrics.js';
 import { initMetrics } from './metrics-panel.js';
+import { MovementTracker, PREPOSITIONS, PREP_STYLE, SAMPLE_HZ, describe } from './movement.js';
 import {
   ARTWORK_DISTANCE_M, ArtworkGuard, PERSONAL_SPACE_M, REPLAN_AFTER_S, STAFF_STANDOFF_M, yields,
 } from './proximity.js';
@@ -161,11 +162,19 @@ scene.background = new THREE.Color(0x0d1117);
 scene.fog = new THREE.Fog(0x0d1117, 80, 170);
 
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 200);
-const HOME_VIEW = { pos: new THREE.Vector3(-0.6, 47, 42), target: new THREE.Vector3(-0.6, 0, 3.4) };
-camera.position.copy(HOME_VIEW.pos);
+const HOME_VIEW = { pos: new THREE.Vector3(6.2, 41, 37), target: new THREE.Vector3(6.2, 0, 2.6) };
+/** The home view for this window: further back on narrow screens, so the whole building fits. */
+function homeView() {
+  const aspect = window.innerWidth / window.innerHeight;
+  if (aspect >= 1.2) return HOME_VIEW;
+  const k = Math.min(3, 1.4 / aspect);
+  const target = new THREE.Vector3(0, 0, 1.5);
+  return { pos: target.clone().add(new THREE.Vector3(0, 41, 34.4).multiplyScalar(k)), target };
+}
+camera.position.copy(homeView().pos);
 
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.copy(HOME_VIEW.target);
+controls.target.copy(homeView().target);
 controls.enableDamping = true;
 controls.maxPolarAngle = Math.PI / 2 - 0.05;
 controls.minDistance = 4;
@@ -196,7 +205,7 @@ scene.add(floor);
   for (let z = Math.ceil(FLOOR.minZ); z <= FLOOR.maxZ; z++) pts.push(FLOOR.minX, 0.005, z, FLOOR.maxX, 0.005, z);
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-  scene.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x2a313c })));
+  scene.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x20262f })));
 }
 
 // Partition walls on every room boundary, with a gap at each door (R3, R4).
@@ -249,18 +258,10 @@ const DOOR_GAP = 1.2;
   }
 }
 
-// Shown while the Places layer, which labels the Entrance itself, is off.
-const entranceMarker = makeLabel('entrance', 0.3);
-{
-  const entrancePlace = model.places.get('Entrance');
-  entranceMarker.el.textContent = 'ENTRANCE →';
-  const ez = entrancePlace ? toThree(entrancePlace.region.centroid()).z : 0;
-  entranceMarker.obj.position.set(FLOOR.minX - 1.2, 0.3, ez);
-  scene.add(entranceMarker.obj);
-}
 
 // Groups for the different overlay layers
-const relationGroup = new THREE.Group();   // enters / controls lines
+const relationGroup = new THREE.Group();   // enters / controls lines (off by default, U5)
+relationGroup.visible = false;
 const velocityGroup = new THREE.Group();   // velocity arrows
 velocityGroup.visible = false;
 const placesGroup = new THREE.Group();     // zone boundary + named places
@@ -344,7 +345,7 @@ class SpatialZone {
   updateLabel() {
     this.label.el.classList.toggle('full', this.atCapacity);
     this.label.el.innerHTML =
-      `<b>zone ${esc(this.Zone_ID)}</b><span>${this.Occupancy} / ${MAX_OCCUPANCY} · ${this.Ambient_Light} lx</span>`;
+      `${esc(this.Zone_ID)} <span>${this.Occupancy}/${MAX_OCCUPANCY}</span>`;
   }
 }
 
@@ -449,22 +450,22 @@ class SmartDisplay {
   // Action: Launch_Media()
   launchMedia() {
     if (this.Power_State !== 'ON') {
-      log(`Launch_Media() rejected on <b>${this.Display_ID}</b>: Power_State is OFF`, 'warn');
+      log(`Launch_Media() rejected on <b>${this.Display_ID}</b>: Power_State is OFF`, 'warn', [this.Display_ID]);
       return false;
     }
     if (this.Current_Media === MEDIA_INTERACTIVE) {
-      log(`<b>${this.Display_ID}</b> is already showing interactive content`, 'warn');
+      log(`<b>${this.Display_ID}</b> is already showing interactive content`, 'warn', [this.Display_ID]);
       return false;
     }
     this.Current_Media = MEDIA_INTERACTIVE;
-    log(`Launch_Media() on <b>${this.Display_ID}</b>: Current_Media → ${MEDIA_INTERACTIVE}`, 'action');
+    log(`Launch_Media() on <b>${this.Display_ID}</b>: Current_Media → ${MEDIA_INTERACTIVE}`, 'action', [this.Display_ID]);
     return true;
   }
 
   resetMedia(reason = '') {
     if (this.Current_Media === MEDIA_LOOP) return false;
     this.Current_Media = MEDIA_LOOP;
-    log(`<b>${this.Display_ID}</b>: Current_Media → ${MEDIA_LOOP}${reason}`, 'action');
+    log(`<b>${this.Display_ID}</b>: Current_Media → ${MEDIA_LOOP}${reason}`, 'action', [this.Display_ID]);
     return true;
   }
 
@@ -556,14 +557,18 @@ class SmartDisplay {
     else if (this.proximity && !this.capacityOK) c = 0xff5d6c;
     else if (on) c = 0xffb547;
     for (const m of [this.ringMat, this.discMat, this.coneMat, this.coneEdgeMat]) m.color.setHex(c);
-    this.discMat.opacity = this.proximity ? 0.12 : 0.04;
-    this.coneMat.opacity = this.proximity ? 0.2 : 0.12;
+    // U5: faint until a visitor is in range.
+    this.discMat.opacity = this.proximity ? 0.1 : 0.02;
+    this.coneMat.opacity = this.proximity ? 0.16 : 0.05;
+    this.ringMat.opacity = this.proximity || on ? 0.55 : 0.22;
+    this.coneEdgeMat.opacity = this.proximity ? 0.6 : 0.25;
   }
 
   updateLabel() {
     const interactive = this.Power_State === 'ON' && this.Current_Media === MEDIA_INTERACTIVE;
     this.label.el.className = `lbl display ${this.Power_State}${interactive ? ' interactive' : ''}`;
-    this.label.el.textContent = `${this.Display_ID} · ${this.Power_State}${interactive ? ' · interactive' : ''}`;
+    const html = `<i class="dot" title="${this.Power_State}"></i>${esc(this.Display_ID)}`;
+    if (this.label.el.innerHTML !== html) this.label.el.innerHTML = html;
   }
 }
 
@@ -746,11 +751,11 @@ class Visitor {
         const d = Math.hypot(this.Position.x - this.stopFor.Position.x, this.Position.z - this.stopFor.Position.z);
         this.stopLogged = true;
         this.lastStopLog = simTime;
-        log(`<b>${esc(this.User_ID)}</b> stops: ${d.toFixed(2)} m from ${esc(this.stopFor.User_ID)} (personal space)`, 'prox');
+        log(`<b>${esc(this.User_ID)}</b> stops: ${d.toFixed(2)} m from ${esc(this.stopFor.User_ID)} (personal space)`, 'prox', [this.User_ID, this.stopFor.User_ID]);
       }
     } else {
       this.blocked = 0;
-      if (was && this.stopLogged) { log(`<b>${esc(this.User_ID)}</b> walks on`, 'prox'); this.stopLogged = false; }
+      if (was && this.stopLogged) { log(`<b>${esc(this.User_ID)}</b> walks on`, 'prox', [this.User_ID]); this.stopLogged = false; }
     }
     // Simple separation so crowds do not overlap
     for (const o of others) {
@@ -810,6 +815,7 @@ class Visitor {
 // ---------------------------------------------------------------------------
 const zones = [...model.zones.values()].map((z) => new SpatialZone(z));
 const zoneOfModel = new Map(zones.map((z) => [z.model, z]));
+for (const z of zones) { z.hub.visible = false; z.label.obj.visible = false; }   // shown with Relations (U5)
 const displays = [...model.displays.values()].map((d) =>
   new SmartDisplay(d, zones.find((z) => z.model.displayIds.has(d.displayId))));
 const displayById = new Map(displays.map((d) => [d.Display_ID, d]));
@@ -900,8 +906,12 @@ const placeViews = new Map();   // name → { place, fillMat, lineMat, baseOpaci
     const label = makeLabel('place', 0.05);
     label.obj.position.copy(toThree(anchor, 0.05));
     label.el.textContent = place.name;
-    label.el.style.color = color;
-    label.el.style.borderColor = color + '99';
+    // U4: rooms get a quiet text label; artworks and the building itself go unlabelled
+    // (their names show in the hover description and the Scene tab).
+    if (!nested || place.name.startsWith('Exhibit ') || place.name.startsWith('Installation ')) {
+      label.obj.visible = false;
+      label.obj.userData.hiddenLabel = true;
+    }
     label.el.title = `Locate ${place.name}`;
     // A press on a label over a visitor or display goes to that object: the label is
     // flat on the floor where agents stand, so it must not stop you grabbing them.
@@ -933,13 +943,6 @@ const placeViews = new Map();   // name → { place, fillMat, lineMat, baseOpaci
     placeViews.set(place.name, { place, fillMat, lineMat, baseOpacity, label, color });
   }
 
-  for (const z of model.zones.values()) {
-    const b = z.boundary;
-    const tag = makeLabel('zone-tag', 0.05);
-    tag.el.textContent = `zone ${z.zoneId} · ${b.xMax - b.xMin} × ${b.yMax - b.yMin} m`;
-    tag.obj.position.copy(toThree(new Location(b.xMax - 5, b.yMax + 1.1, b.frame), 0.05));
-    placesGroup.add(tag.obj);
-  }
 }
 
 const placesLabelObjs = () => placesGroup.children.filter((o) => o.isCSS2DObject);
@@ -950,12 +953,29 @@ const placesLabelObjs = () => placesGroup.children.filter((o) => o.isCSS2DObject
 const logEl = document.getElementById('log');
 let simTime = 0;
 
-function log(msg, type = 'info') {
+// M12: every entry has a category the Log tab can filter on.
+const LOG_CATEGORY = {
+  info: 'rules', rule: 'rules', off: 'rules', action: 'rules', warn: 'rules',
+  prox: 'proximity', place: 'location', enter: 'location', move: 'movement', disc: 'metrics',
+};
+// M11: each agent's (and screen's) own activity, shown in its window.
+const activity = new Map();   // id → [{ t, html, type }]
+
+/** Log `msg` (HTML) globally, and in the activity of every ID in `who`. */
+function log(msg, type = 'info', who = []) {
+  const cat = LOG_CATEGORY[type] ?? 'rules';
   const li = document.createElement('li');
-  li.className = type;
+  li.className = `${type} cat-${cat}`;
   li.innerHTML = `<time>${simTime.toFixed(1)}s</time>${msg}`;
   logEl.prepend(li);
-  while (logEl.children.length > 120) logEl.lastChild.remove();
+  while (logEl.children.length > 200) logEl.lastChild.remove();
+  for (const id of new Set(who)) {
+    if (!id) continue;
+    if (!activity.has(id)) activity.set(id, []);
+    const list = activity.get(id);
+    list.push({ t: simTime, html: msg, type });
+    if (list.length > 150) list.splice(0, list.length - 150);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -985,7 +1005,7 @@ function removeVisitor(v) {
   v.dispose();
   visitors = visitors.filter((o) => o !== v);
   if (selected === v) select(null);
-  log(`${v.User_ID} leaves${v.zone ? ' ' + v.zone.Zone_ID : ''}`, 'enter');
+  log(`${v.User_ID} leaves${v.zone ? ' ' + v.zone.Zone_ID : ''}`, 'enter', [v.User_ID]);
 }
 
 function spawnCrowd(zone, count = 10) {
@@ -1006,7 +1026,7 @@ let guardView = { goTo: new Map(), stepBack: new Map() };
 /** P7-P9: run the artwork guard and carry out its orders. */
 function runGuard() {
   const orders = guard.update(PLAN, model);
-  for (const e of orders.events) log(esc(e.text), 'prox');
+  for (const e of orders.events) log(esc(e.text), 'prox', e.agents ?? []);
   for (const [id, goal] of orders.goTo) {
     const s = visitorById.get(id);
     const g = toThree(goal);
@@ -1036,7 +1056,7 @@ function step(dt) {
   for (const v of visitors) {
     const z = zoneAt(v.Position);
     if (z !== v.zone) {
-      if (z) log(`${v.User_ID} enters zone ${z.Zone_ID}`, 'enter');
+      if (z) log(`${v.User_ID} enters zone ${z.Zone_ID}`, 'enter', [v.User_ID]);
       v.zone = z;
       v.Dwell_Time = 0;
     } else {
@@ -1066,14 +1086,14 @@ function evaluateRule(d, dt) {
       d.Power_State = 'ON';
       log(`Rule fired → <b>${d.Display_ID}</b> Power_State = ON ` +
           `(${d.nearby[0].visitor.User_ID} @ ${d.nearby[0].dist.toFixed(2)} m, ` +
-          `${d.zone.Zone_ID} occupancy ${d.zone.Occupancy})`, 'rule');
+          `${d.zone.Zone_ID} occupancy ${d.zone.Occupancy})`, 'rule', [d.Display_ID, d.nearby[0].visitor.User_ID]);
     }
   } else if (d.Power_State === 'ON') {
     d.unmatchedFor += dt;
     if (d.unmatchedFor >= STANDBY_DELAY) {
       d.Power_State = 'OFF';
       const why = d.proximity ? `${d.zone.Zone_ID} at capacity` : 'no visitor in range';
-      log(`<b>${d.Display_ID}</b> Power_State = OFF (${why})`, 'off');
+      log(`<b>${d.Display_ID}</b> Power_State = OFF (${why})`, 'off', [d.Display_ID]);
       d.resetMedia(' (powered off)');
     }
   }
@@ -1122,23 +1142,23 @@ function settle(state, value, dt, emit) {
 
 function logPlaceChange(v, prev, next) {
   const who = `<b>${esc(v.User_ID)}</b>`;
-  if (next === null) { log(`${who} left ${esc(prev)}`, 'place'); return; }
+  if (next === null) { log(`${who} left ${esc(prev)}`, 'place', [v.User_ID]); return; }
   const prevPlace = prev && model.places.get(prev);
   if (prevPlace && prevPlace.ancestors().some((p) => p.name === next)) {
-    log(`${who} left ${esc(prev)} (back in ${esc(next)})`, 'place');
+    log(`${who} left ${esc(prev)} (back in ${esc(next)})`, 'place', [v.User_ID]);
   } else {
-    log(`${who} entered ${esc(next)}`, 'place');
+    log(`${who} entered ${esc(next)}`, 'place', [v.User_ID]);
   }
 }
 
 function logRelationChange(v, prev, next) {
   const who = `<b>${esc(v.User_ID)}</b>`;
   if (next === null) {
-    log(`${who} moved away from ${esc(prev.split('|')[0])}`, 'place');
+    log(`${who} moved away from ${esc(prev.split('|')[0])}`, 'place', [v.User_ID]);
     return;
   }
   const [displayId, dir] = next.split('|');
-  log(`${who} is now ${DIRECTION_PHRASE[dir]} ${esc(displayId)}`, 'place');
+  log(`${who} is now ${DIRECTION_PHRASE[dir]} ${esc(displayId)}`, 'place', [v.User_ID, displayId]);
 }
 
 function trackLocation(dt) {
@@ -1152,7 +1172,7 @@ function trackLocation(dt) {
 // ---------------------------------------------------------------------------
 // Location questions (Q1-Q4)
 // ---------------------------------------------------------------------------
-const locEl = document.getElementById('location');
+const locEl = document.getElementById('drawer');
 const out = (name) => locEl.querySelector(`[data-out="${name}"]`);
 const locInput = (name) => locEl.querySelector(`[data-loc-input="${name}"]`);
 
@@ -1429,7 +1449,7 @@ function updateProximityVisuals(t) {
   for (const [name, { mat }] of guardRings) {
     const on = breached.has(name);
     mat.color.setHex(on ? 0xff5d6c : 0x8592a3);
-    mat.opacity = on ? 0.65 + Math.sin(t * 6) * 0.3 : 0.45;
+    mat.opacity = on ? 0.65 + Math.sin(t * 6) * 0.3 : 0.12;   // U5: faint until breached
   }
   const pts = [];
   for (const [vid, c] of guard.calls) {
@@ -1443,9 +1463,113 @@ function updateProximityVisuals(t) {
   for (const v of visitors) {
     const stopped = !!v.stopFor;
     v.spaceMat.color.setHex(stopped ? 0xffb547 : v.mode === 'step' ? 0xff5d6c : v.mode === 'duty' ? 0x38d0ff : 0x8592a3);
-    v.spaceMat.opacity = stopped || v.mode ? 0.95 : 0.35;
-    const text = `${v.User_ID}${stopped ? ' ⏸' : ''}${v.mode === 'duty' ? ' → call' : ''}${v.mode === 'step' ? ' ↩' : ''}`;
-    if (v.label.el.textContent !== text) v.label.el.textContent = text;
+    v.spaceMat.opacity = stopped || v.mode ? 0.9 : 0.3;
+    // U5: the 0.5 m ring shows on stopped or busy agents, or for everyone when asked.
+    v.spaceRing.visible = ringsForAll || stopped || !!v.mode;
+    // M10: the label carries the primary preposition as a coloured glyph and the entity.
+    const p = tracker.primaryOf(v.User_ID);
+    const badge = p ? `<span class="mv" style="color:${PREP_STYLE[p.preposition].color}">${PREP_STYLE[p.preposition].glyph} ${esc(p.entity)}</span>` : '';
+    const html = `${esc(v.User_ID)}${stopped ? ' ⏸' : ''}${v.mode === 'duty' ? ' · call' : ''}${v.mode === 'step' ? ' ↩' : ''}${badge}`;
+    if (v.label.el.innerHTML !== html) v.label.el.innerHTML = html;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Movement prepositions (docs/MOVEMENT_PREPOSITIONS.md M2, M6, M10)
+// ---------------------------------------------------------------------------
+const tracker = new MovementTracker();
+const fixedEntities = [
+  ...displays.map((d) => { const w = d.model.position.toWorld(); return { id: d.Display_ID, kind: 'screen', x: w.x, y: w.y }; }),
+  ...[...PLAN.artworks].map(([id, l]) => ({ id, kind: 'artwork', x: l.x, y: l.y })),
+];
+const fixedById = new Map(fixedEntities.map((f) => [f.id, f]));
+let sampleClock = 0, sampleTime = 0;
+
+function sampleMovement(dt) {
+  sampleClock += dt;
+  if (sampleClock < 1 / SAMPLE_HZ) return;
+  sampleClock %= 1 / SAMPLE_HZ;
+  sampleTime += 1 / SAMPLE_HZ;
+  const agents = visitors.map((v) => ({ id: v.User_ID, x: v.model.position.x, y: v.model.position.y }));
+  for (const ev of tracker.sample(sampleTime, agents, fixedEntities)) {
+    const s = PREP_STYLE[ev.preposition];
+    const who = [ev.agent];
+    if (ev.kind !== 'artwork') who.push(ev.entity);   // screens and agents have windows too
+    log(`<span class="mv-k ${ev.preposition}">${s.glyph}</span> ${esc(describe(ev.agent, ev))}`, 'move', who);
+  }
+  drawMovementLines();
+}
+
+// Lines: toward = solid with a chevron at the entity, away = dashed with a chevron at
+// the agent, around = an arc about the entity with a chevron at its leading end.
+const movementGroup = new THREE.Group();
+scene.add(movementGroup);
+const mvMats = Object.fromEntries(Object.entries(PREP_STYLE).map(([k, st]) => [k,
+  k === 'away' ? new THREE.LineDashedMaterial({ color: st.color, dashSize: 0.3, gapSize: 0.2, transparent: true, opacity: 0.9 })
+    : new THREE.LineBasicMaterial({ color: st.color, transparent: true, opacity: 0.9 })]));
+const mvLines = Object.fromEntries(Object.keys(PREP_STYLE).map((k) => {
+  const l = new THREE.LineSegments(new THREE.BufferGeometry(), mvMats[k]);
+  l.frustumCulled = false;
+  movementGroup.add(l);
+  return [k, l];
+}));
+
+function entityXY(id) {
+  const f = fixedById.get(id);
+  if (f) return [f.x, f.y];
+  const v = visitorById.get(id);
+  return v ? [v.model.position.x, v.model.position.y] : null;
+}
+
+function chevron(out, tip, dir, h, size = 0.35) {
+  const len = Math.hypot(dir[0], dir[1]) || 1, ux = dir[0] / len, uy = dir[1] / len;
+  for (const s of [1, -1]) {
+    const bx = tip[0] - ux * size + s * -uy * size * 0.6, by = tip[1] - uy * size + s * ux * size * 0.6;
+    out.push(...worldXYToThree(tip[0], tip[1], h).toArray(), ...worldXYToThree(bx, by, h).toArray());
+  }
+}
+
+function drawMovementLines() {
+  const H = 0.12;
+  const pts = { toward: [], away: [], around: [] };
+  const open = new Set(wins.filter((w) => w.entity.kind === 'visitor').map((w) => w.entity.User_ID));
+  for (const v of visitors) {
+    if (!movementForAll && !open.has(v.User_ID)) continue;
+    const a = [v.model.position.x, v.model.position.y];
+    for (const r of tracker.relationsOf(v.User_ID)) {
+      const e = entityXY(r.entity);
+      if (!e) continue;
+      const out = pts[r.preposition];
+      const dx = e[0] - a[0], dy = e[1] - a[1], d = Math.hypot(dx, dy) || 1;
+      if (r.preposition === 'toward') {
+        const tip = [e[0] - (dx / d) * 0.5, e[1] - (dy / d) * 0.5];
+        out.push(...worldXYToThree(a[0], a[1], H).toArray(), ...worldXYToThree(tip[0], tip[1], H).toArray());
+        chevron(out, tip, [dx, dy], H);
+      } else if (r.preposition === 'away') {
+        const tail = [e[0] - (dx / d) * 0.5, e[1] - (dy / d) * 0.5];
+        out.push(...worldXYToThree(tail[0], tail[1], H).toArray(), ...worldXYToThree(a[0], a[1], H).toArray());
+        chevron(out, a, [-dx, -dy], H);
+      } else {
+        const rad = d, a0 = Math.atan2(a[1] - e[1], a[0] - e[0]);
+        const sgn = r.direction === 'clockwise' ? -1 : 1, span = (100 * Math.PI) / 180, nSeg = 16;
+        let prev = null;
+        for (let i = 0; i <= nSeg; i++) {
+          const ang = a0 - sgn * span * 0.6 + sgn * span * (i / nSeg);
+          const p = [e[0] + rad * Math.cos(ang), e[1] + rad * Math.sin(ang)];
+          if (prev) out.push(...worldXYToThree(prev[0], prev[1], H).toArray(), ...worldXYToThree(p[0], p[1], H).toArray());
+          prev = p;
+        }
+        const angEnd = a0 + sgn * span * 0.4;
+        chevron(out, prev, [-Math.sin(angEnd) * sgn, Math.cos(angEnd) * sgn], H);
+      }
+    }
+  }
+  for (const k of Object.keys(pts)) {
+    const l = mvLines[k];
+    l.geometry.dispose();
+    l.geometry = new THREE.BufferGeometry();
+    l.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pts[k], 3));
+    if (k === 'away') l.computeLineDistances();
   }
 }
 
@@ -1537,10 +1661,11 @@ function updateVisuals(dt, t) {
   if (velocityGroup.visible) for (const v of visitors) v.updateArrow();
 
   // Each tab shows only its own overlays.
+  // Each drawer tab shows only its own overlays.
   const metricsMode = metricsActive();
-  locGroup.visible = !metricsMode;
+  locGroup.visible = paneOpen('location');
   metricsUI.setSceneVisible(metricsMode);
-  document.body.classList.toggle('metrics-mode', metricsMode);
+  movementGroup.visible = !metricsMode;
   updateFrameOverlay();
   updateFindMarker(t);
   updateProximityVisuals(t);
@@ -1557,10 +1682,15 @@ function updateVisuals(dt, t) {
 }
 
 // ---------------------------------------------------------------------------
-// Selection & inspector
+// Selection and entity windows (docs/MOVEMENT_PREPOSITIONS.md M11)
+// Clicking an agent, screen or zone node opens its window: movement, its own
+// activity log, and its details folded away. Up to MAX_WINDOWS stay open.
 // ---------------------------------------------------------------------------
-const inspectorEl = document.getElementById('inspector');
+const windowsEl = document.getElementById('windows');
+const overviewEl = document.getElementById('overview');
+const MAX_WINDOWS = 3;
 let selected = null;
+const wins = [];   // [{ ref, entity, el, shown }], oldest first
 
 function entityRef(e) {
   if (e.kind === 'visitor') return `visitor:${e.User_ID}`;
@@ -1586,115 +1716,153 @@ const attrRow = (name, field, derived = false) =>
 
 function select(entity) {
   selected = entity;
-  if (entity) setLocSubject(entityId(entity));
+  if (entity) { setLocSubject(entityId(entity)); openWindow(entity); }
   if (entity?.kind === 'visitor' && metricsActive()) metricsUI.setA(entity.User_ID);
-  renderInspector(true);
   renderLocation();
 }
 
-function renderInspector(full = false) {
-  const e = selected;
-  if (!e) { renderOverview(); return; }
+function openWindow(entity) {
+  const ref = entityRef(entity);
+  let w = wins.find((x) => x.ref === ref);
+  if (w) {
+    wins.splice(wins.indexOf(w), 1);
+    wins.push(w);
+    windowsEl.append(w.el);
+    w.el.classList.remove('flash'); void w.el.offsetWidth; w.el.classList.add('flash');
+    return;
+  }
+  if (wins.length >= MAX_WINDOWS) closeWindow(wins[0].ref);
+  const el = document.createElement('section');
+  el.className = 'win panel';
+  el.dataset.ref = ref;
+  el.setAttribute('aria-label', `${entityId(entity)} window`);
+  w = { ref, entity, el, shown: 0 };
+  wins.push(w);
+  windowsEl.append(el);
+  renderWindow(w, true);
+}
 
+function closeWindow(ref) {
+  const i = wins.findIndex((x) => x.ref === ref);
+  if (i < 0) return;
+  wins[i].el.remove();
+  wins.splice(i, 1);
+  if (selected && entityRef(selected) === ref) selected = null;
+}
+
+function movementChips(id) {
+  const rels = [...tracker.relationsOf(id)].sort((a, b) =>
+    PREPOSITIONS.indexOf(a.preposition) - PREPOSITIONS.indexOf(b.preposition) || a.distance - b.distance);
+  if (!rels.length) return '<span class="rel">no movement relation right now</span>';
+  return rels.slice(0, 6).map((r) => {
+    const s = PREP_STYLE[r.preposition];
+    return `<span class="mv-chip ${r.preposition}" title="${esc(describe(id, r))}">${s.glyph} ${esc(r.entity)}${r.direction ? (r.direction === 'clockwise' ? ' ⟳' : ' ⟲') : ''}</span>`;
+  }).join('') + (rels.length > 6 ? `<span class="rel"> +${rels.length - 6}</span>` : '');
+}
+
+function renderWindow(w, full = false) {
+  const e = w.entity, el = w.el;
   if (full) {
-    let html = `<div class="ins-head"><span class="chip ${e.kind}">${
-      { visitor: 'Visitor', zone: 'Spatial Zone', display: 'Smart Display' }[e.kind]
-    }</span><h2 data-field="title"></h2><button class="x" data-action="deselect" title="Close">×</button></div>`;
-
+    const kindLabel = e.kind === 'visitor' ? (e.model.role === 'staff' ? 'Staff' : 'Visitor') : e.kind === 'zone' ? 'Zone' : 'Screen';
+    let details;
     if (e.kind === 'visitor') {
-      html += `<div class="attrs">${attrRow('User_ID', 'User_ID')}${attrRow('Position', 'Position')}${
-        attrRow('Velocity', 'Velocity')}${attrRow('Dwell_Time', 'Dwell_Time')}${attrRow('Role', 'Role')}${attrRow('Place', 'Place', true)}${attrRow('Proximity', 'Prox', true)}</div>
-        <h4>Relationships</h4><div data-field="rel"></div>
-        <h4>Rule context</h4><div data-field="ctx"></div>
-        <div class="btns"><button data-action="remove-visitor" class="danger">Remove visitor</button></div>
-        <p class="hint-text">Drag the visitor in the 3D view to move it next to a display.</p>`;
+      details = `<div class="attrs">${attrRow('Position', 'Position')}${attrRow('Velocity', 'Velocity')}${attrRow('Dwell_Time', 'Dwell_Time')}${
+        attrRow('Role', 'Role')}${attrRow('Place', 'Place', true)}${attrRow('Proximity', 'Prox', true)}${attrRow('Zone', 'rel', true)}${attrRow('Nearest screen', 'ctx', true)}</div>
+        <div class="btns"><button data-action="remove-visitor" class="danger">Remove</button></div>`;
     } else if (e.kind === 'zone') {
-      html += `<div class="attrs">${attrRow('Zone_ID', 'Zone_ID')}${attrRow('Occupancy', 'Occupancy')}${
-        attrRow('Ambient_Light', 'Ambient_Light')}${attrRow('Boundary', 'Boundary', true)}</div>
+      details = `<div class="attrs">${attrRow('Occupancy', 'Occupancy')}${attrRow('Ambient_Light', 'Ambient_Light')}${attrRow('Boundary', 'Boundary', true)}</div>
         <div class="bar" data-field="occBar"><i></i></div>
         <div class="ctrl"><label>Ambient_Light <span data-field="luxValue"></span></label>
           <input type="range" min="0" max="1000" step="10" data-input="ambient" value="${e.Ambient_Light}"></div>
-        <h4>Controls</h4><div data-field="controls"></div>
-        <h4>Visitors who entered</h4><div data-field="visitors"></div>
-        <div class="btns">
-          <button data-action="add-crowd">＋10 Crowd here</button>
-          <button data-action="clear-zone" class="danger">Clear zone</button>
-        </div>
-        <p class="hint-text">Raise occupancy to ${MAX_OCCUPANCY}+ to see the rule inhibit this zone's displays.</p>`;
+        <div class="win-cap">Controls</div><div data-field="controls"></div>
+        <div class="btns"><button data-action="add-crowd">＋10 Crowd here</button><button data-action="clear-zone" class="danger">Clear zone</button></div>`;
     } else {
-      html += `<div class="attrs">${attrRow('Display_ID', 'Display_ID')}${attrRow('Current_Media', 'Current_Media')}${
-        attrRow('Volume_Level', 'Volume_Level')}${attrRow('Power_State', 'Power_State')}${attrRow('Status', 'Status')}${
-        attrRow('Position', 'Position', true)}${attrRow('Orientation', 'Orientation', true)}</div>
+      details = `<div class="attrs">${attrRow('Power_State', 'Power_State')}${attrRow('Current_Media', 'Current_Media')}${attrRow('Status', 'Status')}${
+        attrRow('Volume_Level', 'Volume_Level')}${attrRow('Position', 'Position', true)}${attrRow('Orientation', 'Orientation', true)}</div>
         <div class="ctrl"><label>Volume_Level <span data-field="volValue"></span></label>
           <input type="range" min="0" max="100" step="1" data-input="volume" value="${e.Volume_Level}"></div>
-        <h4>Relationships</h4><div data-field="rel"></div>
-        <h4>Rule evaluation</h4><div data-field="ctx"></div>
-        <div class="btns">
-          <button data-action="launch-media" class="primary">▶ Launch_Media()</button>
-          <button data-action="reset-media">⟲ Default loop</button>
-        </div>`;
+        <div class="win-cap">Rule</div><div data-field="ctx"></div>
+        <div class="btns"><button data-action="launch-media" class="primary">▶ Launch_Media()</button><button data-action="reset-media">⟲ Default loop</button></div>`;
     }
-    inspectorEl.innerHTML = html;
+    el.innerHTML = `
+      <header class="win-head" title="Drag to move"><span class="chip ${e.kind}">${kindLabel}</span><b data-field="title"></b>
+        <span class="win-sub" data-field="sub"></span><button class="x" data-win-close title="Close (Esc)" aria-label="Close">×</button></header>
+      ${e.kind === 'visitor' ? '<div class="win-move" data-field="move"></div>' : ''}
+      <div class="win-cap">Activity</div>
+      <ol class="act" data-act></ol>
+      <details class="win-details"${e.kind === 'visitor' ? '' : ' open'}><summary>Details</summary>${details}</details>`;
+    w.shown = 0;
   }
 
   const f = {};
   if (e.kind === 'visitor') {
     const m = e.model;
     f.title = esc(e.User_ID);
-    f.User_ID = esc(e.User_ID);
+    f.sub = `${esc(model.placeAt(m.position)?.name ?? 'outside')}${e.stopFor ? ' · ⏸ stopped' : e.mode === 'step' ? ' · stepping back' : e.mode === 'duty' ? ' · on call' : ''}`;
+    f.move = movementChips(e.User_ID);
     f.Position = fmtLoc(m.position) + ' m';
-    f.Velocity = `(${f2(m.velocity[0])}, ${f2(m.velocity[1])}) · ${e.Velocity.length().toFixed(2)} m/s`;
+    f.Velocity = `${e.Velocity.length().toFixed(2)} m/s`;
     f.Dwell_Time = `${e.Dwell_Time.toFixed(1)} s`;
-    f.Role = m.role === 'staff' ? '<span class="warn">staff</span> (may use staff doors)' : 'visitor';
+    f.Role = m.role === 'staff' ? '<span class="warn">staff</span>' : 'visitor';
     f.Prox = proximityState(e);
     f.Place = esc(model.placeAt(m.position)?.name ?? '—');
-    f.rel = e.zone ? `${chip(e)}<span class="rel">enters</span>${chip(e.zone)}` : '<span class="no">outside all zones</span>';
+    f.rel = e.zone ? chip(e.zone) : '<span class="no">outside all zones</span>';
     const nd = model.nearestDisplay(m.position);
     const best = nd && { d: displayById.get(nd.displayId), dist: nd.position.distanceTo(m.position) };
-    f.ctx = best
-      ? `Nearest ${chip(best.d)} at <span class="${best.dist <= RULE_RADIUS ? 'ok' : 'no'}">${best.dist.toFixed(2)} m</span>` +
-        (best.dist <= RULE_RADIUS ? ' — within rule radius' : ` — needs ≤ ${RULE_RADIUS} m`)
-      : 'No displays';
+    f.ctx = best ? `${chip(best.d)} <span class="${best.dist <= RULE_RADIUS ? 'ok' : 'rel'}">${best.dist.toFixed(1)} m</span>` : '—';
   } else if (e.kind === 'zone') {
     const b = e.model.boundary;
-    f.title = `zone ${esc(e.Zone_ID)}`;
-    f.Zone_ID = esc(e.Zone_ID);
+    f.title = esc(e.Zone_ID);
+    f.sub = `${e.Occupancy} inside`;
     f.Occupancy = `<span class="${e.atCapacity ? 'no' : 'ok'}">${e.Occupancy}</span> / ${MAX_OCCUPANCY}`;
     f.Ambient_Light = `${e.Ambient_Light} lx`;
     f.Boundary = `${b.xMax - b.xMin} × ${b.yMax - b.yMin} m`;
     f.luxValue = `${e.Ambient_Light} lx`;
-    f.controls = e.displays.map((d) => `${chip(e)}<span class="rel">controls</span>${chip(d)}`).join('<br>');
-    const inside = visitors.filter((v) => v.zone === e);
-    f.visitors = inside.length
-      ? inside.slice(0, 24).map(chip).join('') + (inside.length > 24 ? ` <span class="rel">+${inside.length - 24} more</span>` : '')
-      : '<span class="rel">none</span>';
+    f.controls = e.displays.map(chip).join('');
   } else {
     f.title = esc(e.Display_ID);
-    f.Display_ID = esc(e.Display_ID);
+    f.sub = `<span class="badge ${e.Power_State}">${e.Power_State}</span>`;
+    f.Power_State = e.Power_State;
     f.Current_Media = e.Current_Media;
+    f.Status = e.Status;
     f.Volume_Level = `${e.Volume_Level}%`;
     f.volValue = `${e.Volume_Level}%`;
-    f.Power_State = `<span class="badge ${e.Power_State}">${e.Power_State}</span>`;
-    f.Status = e.Status;
     f.Position = fmtLoc(e.model.position.toWorld()) + ' m';
     f.Orientation = `${f1(e.heading)}° · faces ${compass(e.heading)}`;
-    f.rel = `${chip(e.zone)}<span class="rel">controls</span>${chip(e)}`;
     const n = e.nearby[0];
-    f.ctx = `<div>${e.proximity ? '✓' : '✗'} Visitor within ${RULE_RADIUS} m: <span class="${e.proximity ? 'ok' : 'no'}">${
-      n ? `${esc(n.visitor.User_ID)} @ ${n.dist.toFixed(2)} m${e.nearby.length > 1 ? ` (+${e.nearby.length - 1})` : ''}` : 'none'
-    }</span></div><div>${e.capacityOK ? '✓' : '✗'} ${esc(e.zone.Zone_ID)}.Occupancy &lt; ${MAX_OCCUPANCY}: <span class="${
-      e.capacityOK ? 'ok' : 'no'}">${e.zone.Occupancy}</span></div><div>⇒ ${
-      e.ruleMatched ? '<span class="ok">rule satisfied — Power_State ON</span>' : '<span class="warn">rule not satisfied</span>'}</div>`;
+    f.ctx = `<div>${e.proximity ? '✓' : '✗'} visitor ≤ ${RULE_RADIUS} m: <span class="${e.proximity ? 'ok' : 'no'}">${
+      n ? `${esc(n.visitor.User_ID)} @ ${n.dist.toFixed(2)} m` : 'none'}</span></div><div>${e.capacityOK ? '✓' : '✗'} occupancy &lt; ${MAX_OCCUPANCY}: ${e.zone.Occupancy}</div>`;
+  }
+  for (const node of el.querySelectorAll('[data-field]')) {
+    const k = node.dataset.field;
+    if (k === 'occBar') {
+      node.classList.toggle('full', e.atCapacity);
+      node.firstElementChild.style.width = `${Math.min(100, (e.Occupancy / MAX_OCCUPANCY) * 100)}%`;
+    } else if (k in f && node.innerHTML !== f[k]) {
+      node.innerHTML = f[k];
+    }
   }
 
-  for (const el of inspectorEl.querySelectorAll('[data-field]')) {
-    const k = el.dataset.field;
-    if (k === 'occBar') {
-      el.classList.toggle('full', e.atCapacity);
-      el.firstElementChild.style.width = `${Math.min(100, (e.Occupancy / MAX_OCCUPANCY) * 100)}%`;
-    } else if (k in f && el.innerHTML !== f[k]) {
-      el.innerHTML = f[k];
-    }
+  // Activity: append what's new, newest first.
+  const list = activity.get(entityId(e)) ?? [];
+  const ol = el.querySelector('[data-act]');
+  if (w.shown > list.length) w.shown = 0;
+  if (!list.length && !ol.children.length) ol.innerHTML = '<li class="empty">Nothing yet. Activity shows up here as it happens.</li>';
+  for (let i = w.shown; i < list.length; i++) {
+    ol.querySelector('.empty')?.remove();
+    const li = document.createElement('li');
+    li.className = list[i].type;
+    li.innerHTML = `<time>${list[i].t.toFixed(1)}s</time>${list[i].html}`;
+    ol.prepend(li);
+  }
+  while (ol.children.length > 80) ol.lastChild.remove();
+  w.shown = list.length;
+}
+
+function renderWindows(full = false) {
+  for (const w of [...wins]) {
+    if (w.entity.kind === 'visitor' && !visitorById.has(w.entity.User_ID)) { closeWindow(w.ref); continue; }
+    renderWindow(w, full);
   }
 }
 
@@ -1704,28 +1872,26 @@ function renderOverview() {
   const dispRows = displays.map((d) =>
     `<tr data-select="${esc(entityRef(d))}"><td>${chip(d)}</td><td><span class="badge ${d.Power_State}">${d.Power_State}</span></td><td>${
       d.Current_Media === MEDIA_INTERACTIVE ? 'Interactive' : 'Loop'}</td></tr>`).join('');
+  const agentChips = visitors.map((v) => chip(v)).join('');
   const html = `
-    <div class="ins-head"><h2>Semantic model</h2></div>
-    <p class="hint-text">Click any visitor, display or zone node to inspect it. Click the ground to probe who is there.</p>
-    <h4>Spatial Zones</h4>
+    <h3>Zone</h3>
     <table class="overview"><tr><th>Zone</th><th>Occupancy</th><th>Light</th></tr>${zoneRows}</table>
-    <h4>Smart Displays</h4>
-    <table class="overview"><tr><th>Display</th><th>Power</th><th>Media</th></tr>${dispRows}</table>
-    <h4>Places</h4>
-    <div>${[...model.places.values()].map((p) => `<span class="chip place" data-locate="${esc(p.name)}">${esc(p.name)}</span>`).join('')}</div>
-    <h4>Visitors</h4>
-    <div>${visitors.length} in the scene</div>
-    <h4>Legend</h4>
-    <div class="hint-text" style="margin:0">
-      <span class="ok">●</span> rule satisfied ·
-      <span class="no">●</span> visitor in range but zone at capacity ·
-      <span class="warn">●</span> cooling down<br>
-      Ring: ${RULE_RADIUS} m rule radius · wedge: ±${FRONT_HALF_ANGLE}° "in front" · arrow: facing<br>
-      Dashed lines: zone <i>controls</i> display · thin lines: visitor <i>enters</i> zone
-    </div>`;
+    <h3>Screens</h3>
+    <table class="overview"><tr><th>Screen</th><th>Power</th><th>Media</th></tr>${dispRows}</table>
+    <h3>Agents <span class="rel">${visitors.length}</span></h3>
+    <div>${agentChips || '<span class="rel">none</span>'}</div>
+    <h3>Places</h3>
+    <div>${[...model.places.values()].filter((p) => p.parent).map((p) => `<span class="chip place" data-locate="${esc(p.name)}">${esc(p.name)}</span>`).join('')}</div>
+    <h3>Legend</h3>
+    <ul class="legend">
+      <li><span class="mv-k toward">→</span> toward · <span class="mv-k away">←</span> away from · <span class="mv-k around">↻</span> around</li>
+      <li><span class="ok">●</span> screen ON · <span class="rel">●</span> OFF · ring: ${RULE_RADIUS} m range · wedge: ±${FRONT_HALF_ANGLE}° in front</li>
+      <li>⏸ stopped for personal space · <span class="warn">- - -</span> staff on the way · red ring: artwork breach</li>
+      <li>▸| one-way door · S1 staff door g1⇄g2 · S2 express g4→g7 · S3 return g8→g3</li>
+    </ul>`;
   // Only touch the DOM when something changed, so clicks on rows are not lost.
-  if (html !== lastOverview || !inspectorEl.querySelector('table.overview')) {
-    inspectorEl.innerHTML = html;
+  if (html !== lastOverview) {
+    overviewEl.innerHTML = html;
     lastOverview = html;
   }
 }
@@ -1740,9 +1906,8 @@ function renderRuleEval() {
   }
   displays.forEach((d, i) => {
     const n = d.nearby[0];
-    const html = `<span class="${d.proximity ? 'ok' : 'no'}">${n ? `${esc(n.visitor.User_ID)} @ ${n.dist.toFixed(2)} m` : `no visitor ≤ ${RULE_RADIUS} m`}</span>` +
-      ` ∧ <span class="${d.capacityOK ? 'ok' : 'no'}">${esc(d.zone.Zone_ID)}.occ ${d.zone.Occupancy} ${d.capacityOK ? '&lt;' : '≥'} ${MAX_OCCUPANCY}</span>` +
-      ` ⇒ <span class="badge ${d.Power_State}">${d.Power_State}</span>`;
+    const html = `<span class="badge ${d.Power_State}">${d.Power_State}</span> ` +
+      `<span class="rel">${n ? `${esc(n.visitor.User_ID)} at ${n.dist.toFixed(1)} m` : `nobody within ${RULE_RADIUS} m`}${d.capacityOK ? '' : ' · zone full'}</span>`;
     const body = ruleEvalEl.children[i].lastElementChild;
     if (body.innerHTML !== html) body.innerHTML = html;
   });
@@ -1753,10 +1918,30 @@ function refreshLabels() {
   for (const d of displays) d.updateLabel();
 }
 
+// U3: one line of state, with help behind "?".
+const statusEl = document.querySelector('[data-status="text"]');
+function renderStatus() {
+  const staff = visitors.filter((v) => v.model.role === 'staff').length;
+  const on = displays.filter((d) => d.Power_State === 'ON').length;
+  const stopped = visitors.filter((v) => v.stopFor).length;
+  const calls = guard.calls.size;
+  const parts = [
+    `${visitors.length - staff} visitor${visitors.length - staff === 1 ? '' : 's'} · ${staff} staff`,
+    `<span class="${on ? 'ok' : ''}">${on}/${displays.length} screens on</span>`,
+    stopped ? `<span class="warn">${stopped} stopped</span>` : '0 stopped',
+    calls ? `<span class="no">${calls} artwork call${calls > 1 ? 's' : ''}</span>` : 'no artwork calls',
+  ];
+  if (paused) parts.push('<span class="warn">paused</span>');
+  const html = parts.join('<span class="sep">·</span>');
+  if (statusEl.innerHTML !== html) statusEl.innerHTML = html;
+}
+
 // ---------------------------------------------------------------------------
-// Actions (toolbar + inspector buttons)
+// Actions (toolbar menus + window buttons)
 // ---------------------------------------------------------------------------
 let paused = false;
+let movementForAll = false;
+let ringsForAll = false;
 
 function contextZone() {
   if (!selected) return null;
@@ -1769,14 +1954,14 @@ const actions = {
     const e = model.places.get('Entrance')?.region.centroid() ?? new Location(0.6, CY);
     const w = e.toWorld();
     const v = spawnVisitor(toThree(new Location(w.x, w.y + rand(-1.5, 1.5))));
-    if (v) log(`${v.User_ID} arrives at the entrance`, 'action');
+    if (v) log(`${v.User_ID} arrives at the entrance`, 'action', [v.User_ID]);
   },
   'add-staff'() {
     let n = 1;
     while (model.visitors.has(`S-${String(n).padStart(3, '0')}`)) n++;
     const c = PLAN.centre('Checkout');
     const s = spawnVisitor(toThree(new Location(c.x + rand(-0.8, 0.8), c.y + rand(-2, 2))), { id: `S-${String(n).padStart(3, '0')}`, role: 'staff' });
-    if (s) log(`${s.User_ID} (staff) starts a shift at the Checkout`, 'action');
+    if (s) log(`${s.User_ID} (staff) starts a shift at the Checkout`, 'action', [s.User_ID]);
   },
   'add-crowd'() {
     spawnCrowd(contextZone() ?? zones[0]);
@@ -1799,17 +1984,18 @@ const actions = {
     if (selected?.kind === 'display') { selected.launchMedia(); return; }
     const on = displays.filter((d) => d.Power_State === 'ON' && d.Current_Media !== MEDIA_INTERACTIVE);
     if (!on.length) {
-      log('Launch_Media(): select a display, or wait until one is powered ON by the rule', 'warn');
+      log('Launch_Media(): open a screen\'s window, or wait until one is powered ON by the rule', 'warn');
       return;
     }
     for (const d of on) d.launchMedia();
   },
   'reset-media'() {
     const targets = selected?.kind === 'display' ? [selected] : displays;
-    if (!targets.some((d) => d.resetMedia())) log('Displays are already on the default loop', 'warn');
+    if (!targets.some((d) => d.resetMedia())) log('Screens are already on the default loop', 'warn');
   },
   'toggle-relations'(btn) {
     relationGroup.visible = !relationGroup.visible;
+    for (const z of zones) { z.hub.visible = relationGroup.visible; z.label.obj.visible = relationGroup.visible; }
     btn?.classList.toggle('on', relationGroup.visible);
   },
   'toggle-velocity'(btn) {
@@ -1822,91 +2008,154 @@ const actions = {
     btn?.classList.toggle('on', show);
   },
   'toggle-proximity'(btn) {
-    proxGroup.visible = !proxGroup.visible;
-    for (const v of visitors) v.spaceRing.visible = proxGroup.visible;
-    btn?.classList.toggle('on', proxGroup.visible);
+    ringsForAll = !ringsForAll;
+    btn?.classList.toggle('on', ringsForAll);
+  },
+  'toggle-movement'(btn) {
+    movementForAll = !movementForAll;
+    btn?.classList.toggle('on', movementForAll);
   },
   'toggle-places'(btn) {
     placesGroup.visible = !placesGroup.visible;
-    // CSS2D labels follow their own visible flag, not their parent's.
-    for (const o of placesLabelObjs()) o.visible = placesGroup.visible;
-    entranceMarker.obj.visible = !placesGroup.visible;
+    // CSS2D labels follow their own visible flag, not their parent's; artwork labels stay hidden (U4).
+    for (const o of placesLabelObjs()) o.visible = placesGroup.visible && !o.userData.hiddenLabel;
     btn?.classList.toggle('on', placesGroup.visible);
   },
   'reset-camera'() {
-    camera.position.copy(HOME_VIEW.pos);
-    controls.target.copy(HOME_VIEW.target);
+    const home = homeView();
+    camera.position.copy(home.pos);
+    controls.target.copy(home.target);
   },
   pause() {
     paused = !paused;
-    const btn = document.querySelector('[data-action="pause"]');
-    btn.textContent = paused ? '▶ Resume' : '⏸ Pause';
+    const btn = document.querySelector('#toolbar [data-action="pause"]');
+    btn.textContent = paused ? '▶' : '⏸';
+    btn.setAttribute('aria-label', paused ? 'Resume' : 'Pause');
     btn.classList.toggle('on', paused);
-    log(paused ? 'Simulation paused (rule engine still evaluates dragged visitors)' : 'Simulation resumed', 'action');
+    log(paused ? 'Simulation paused (rules still run for dragged agents)' : 'Simulation resumed', 'action');
   },
   reset() {
     loadDemo();
   },
-  deselect() {
-    select(null);
+  help(btn) {
+    const help = document.getElementById('help');
+    help.hidden = !help.hidden;
+    btn?.setAttribute('aria-expanded', String(!help.hidden));
   },
 };
 
 function runAction(name, btn) {
   actions[name]?.(btn);
-  renderInspector(true);
+  if (btn?.getAttribute('role') === 'menuitemcheckbox') btn.setAttribute('aria-checked', String(btn.classList.contains('on')));
+  renderWindows();
+}
+
+// U1: menus open on click and close on Escape or an outside click.
+function closeMenus(except = null) {
+  for (const m of document.querySelectorAll('#toolbar .menu')) {
+    if (m === except) continue;
+    m.querySelector('.menu-pop').hidden = true;
+    m.querySelector('.menu-btn').setAttribute('aria-expanded', 'false');
+  }
 }
 
 document.getElementById('toolbar').addEventListener('click', (e) => {
+  const mb = e.target.closest('.menu-btn');
+  if (mb) {
+    const menu = mb.closest('.menu'), pop = menu.querySelector('.menu-pop');
+    closeMenus(menu);
+    pop.hidden = !pop.hidden;
+    mb.setAttribute('aria-expanded', String(!pop.hidden));
+    return;
+  }
+  const btn = e.target.closest('button[data-action]');
+  if (!btn) return;
+  runAction(btn.dataset.action, btn);
+  if (!btn.closest('[data-keep-open]') || btn.getAttribute('role') !== 'menuitemcheckbox') closeMenus();
+});
+document.getElementById('statusbar').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-action]');
   if (btn) runAction(btn.dataset.action, btn);
 });
-
-for (const el of [inspectorEl, ruleEvalEl]) {
-  el.addEventListener('click', (e) => {
-    const btn = e.target.closest('button[data-action]');
-    if (btn) { runAction(btn.dataset.action, document.querySelector(`#toolbar [data-action="${btn.dataset.action}"]`)); return; }
-    const sel = e.target.closest('[data-select]');
-    if (sel) {
-      const ent = entityByRef(sel.dataset.select);
-      if (ent) select(ent);
-      return;
-    }
-    const l = e.target.closest('[data-locate]');
-    if (l) { setLocSubject(l.dataset.locate); renderLocation(); }
-  });
-}
-
-inspectorEl.addEventListener('input', (e) => {
-  const input = e.target.closest('[data-input]');
-  if (!input || !selected) return;
-  const value = Number(input.value);
-  if (input.dataset.input === 'ambient' && selected.kind === 'zone') selected.setAmbient(value);
-  if (input.dataset.input === 'volume' && selected.kind === 'display') {
-    selected.Volume_Level = value;
-    selected.model.volumeLevel = value;
-    selected.drawTimer = 0;
+document.addEventListener('pointerdown', (e) => {
+  if (!e.target.closest('#toolbar .menu')) closeMenus();
+  if (!e.target.closest('#help, [data-action="help"]')) {
+    document.getElementById('help').hidden = true;
+    document.querySelector('[data-action="help"]').setAttribute('aria-expanded', 'false');
   }
-  renderInspector();
+});
+
+// Windows: close, buttons (acting on that window's entity), chips, sliders, dragging by the header.
+windowsEl.addEventListener('click', (e) => {
+  const card = e.target.closest('.win');
+  if (!card) return;
+  const w = wins.find((x) => x.el === card);
+  if (e.target.closest('[data-win-close]')) { closeWindow(card.dataset.ref); return; }
+  const btn = e.target.closest('button[data-action]');
+  if (btn && w) {
+    selected = w.entity;
+    runAction(btn.dataset.action, null);
+    return;
+  }
+  const sel = e.target.closest('[data-select]');
+  if (sel) { const ent = entityByRef(sel.dataset.select); if (ent) select(ent); }
+});
+
+windowsEl.addEventListener('input', (e) => {
+  const input = e.target.closest('[data-input]');
+  const card = e.target.closest('.win');
+  const w = card && wins.find((x) => x.el === card);
+  if (!input || !w) return;
+  const value = Number(input.value), ent = w.entity;
+  if (input.dataset.input === 'ambient' && ent.kind === 'zone') ent.setAmbient(value);
+  if (input.dataset.input === 'volume' && ent.kind === 'display') {
+    ent.Volume_Level = value;
+    ent.model.volumeLevel = value;
+    ent.drawTimer = 0;
+  }
+  renderWindows();
   refreshLabels();
 });
 
-// Location panel ---------------------------------------------------------------
+windowsEl.addEventListener('pointerdown', (e) => {
+  const head = e.target.closest('.win-head');
+  if (!head || e.target.closest('button') || e.button !== 0) return;
+  const card = head.closest('.win');
+  const r = card.getBoundingClientRect();
+  const dx = e.clientX - r.left, dy = e.clientY - r.top;
+  card.classList.add('floating');   // position: fixed, still inside #windows so its events reach the handlers
+  Object.assign(card.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px` });
+  const move = (ev) => {
+    card.style.left = `${Math.max(0, Math.min(window.innerWidth - 60, ev.clientX - dx))}px`;
+    card.style.top = `${Math.max(0, Math.min(window.innerHeight - 40, ev.clientY - dy))}px`;
+  };
+  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+});
+
+// ---------------------------------------------------------------------------
+// Drawer (U2): Rules · Location · Metrics · Scene · Log
+// ---------------------------------------------------------------------------
 locEl.addEventListener('click', (e) => {
   const tab = e.target.closest('[data-tab]');
   if (tab) { setTab(tab.dataset.tab); return; }
   const head = e.target.closest('[data-loc-action="collapse"]');
   if (head) { setLocationCollapsed(!locEl.classList.contains('collapsed')); return; }
+  const sel = e.target.closest('[data-select]');
+  if (sel) { const ent = entityByRef(sel.dataset.select); if (ent) select(ent); return; }
   const chipEl = e.target.closest('[data-locate]');
   if (chipEl) {
     const id = chipEl.dataset.locate;
     const ent = entityByRef(`${model.kindOf(id)}:${id}`);
     if (ent) select(ent);
-    else { setLocSubject(id); renderLocation(); }
+    else { setLocSubject(id); setTab('location'); renderLocation(); }
   }
 });
 
 locEl.addEventListener('input', (e) => {
+  const filter = e.target.closest('[data-log-filter]');
+  if (filter) { logEl.classList.toggle(`hide-${filter.dataset.logFilter}`, !filter.checked); return; }
   const input = e.target.closest('[data-loc-input]');
   if (!input) return;
   const kind = input.dataset.locInput;
@@ -1922,19 +2171,25 @@ function setLocationCollapsed(collapsed) {
   locEl.querySelector('[data-loc-action="collapse"]').setAttribute('aria-expanded', String(!collapsed));
 }
 
-/** Location | Metrics tabs of the left panel. */
 function setTab(name) {
   for (const t of locEl.querySelectorAll('[data-tab]')) t.setAttribute('aria-selected', String(t.dataset.tab === name));
   for (const pane of locEl.querySelectorAll('[data-pane]')) pane.hidden = pane.dataset.pane !== name;
   setLocationCollapsed(false);
   if (name === 'metrics') metricsUI.render(0);
 }
-const metricsActive = () => !locEl.querySelector('[data-pane="metrics"]').hidden && !locEl.classList.contains('collapsed');
+const paneOpen = (name) => !locEl.querySelector(`[data-pane="${name}"]`).hidden && !locEl.classList.contains('collapsed');
+const metricsActive = () => paneOpen('metrics');
 
 window.addEventListener('keydown', (e) => {
+  if (e.code === 'Escape') {
+    if (document.querySelector('#toolbar .menu-pop:not([hidden])')) { closeMenus(); return; }
+    if (!document.getElementById('help').hidden) { document.getElementById('help').hidden = true; return; }
+    if (wins.length) closeWindow(wins[wins.length - 1].ref);
+    selected = null;
+    return;
+  }
   if (e.target.closest('input, textarea, select')) return;
   if (e.code === 'Space') { e.preventDefault(); runAction('pause'); }
-  if (e.code === 'Escape') select(null);
   if (e.code === 'Delete' && selected?.kind === 'visitor') runAction('remove-visitor');
 });
 
@@ -2055,19 +2310,11 @@ canvas.addEventListener('pointerup', (e) => {
   pointerDown = null;
 });
 
-// Keep the panels below the toolbar however many rows it wraps to.
+// Small screens place menus and windows below the toolbar.
 const toolbarEl = document.getElementById('toolbar');
 new ResizeObserver(() => {
   document.documentElement.style.setProperty('--toolbar-h', `${toolbarEl.offsetHeight}px`);
 }).observe(toolbarEl);
-new ResizeObserver(() => {
-  document.documentElement.style.setProperty('--loc-h', `${locEl.offsetHeight}px`);
-}).observe(locEl);
-// The Location panel takes whatever height the rule/log panel leaves on the left.
-const rulesEl = document.getElementById('rules');
-new ResizeObserver(() => {
-  document.documentElement.style.setProperty('--rules-h', `${rulesEl.offsetHeight}px`);
-}).observe(rulesEl);
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -2082,6 +2329,9 @@ window.addEventListener('resize', () => {
 function loadDemo() {
   for (const v of visitors) v.dispose();
   guard.calls.clear();
+  tracker.reset();
+  activity.clear();
+  for (const w of [...wins]) closeWindow(w.ref);
   // The model starts with buildExhibition()'s agents; they are re-added below as scene objects.
   for (const id of [...model.visitors.keys()]) model.remove(id);
   visitors = [];
@@ -2128,18 +2378,19 @@ const metricsUI = initMetrics({
 });
 
 if (window.matchMedia('(max-width: 600px)').matches) setLocationCollapsed(true);
-entranceMarker.obj.visible = !placesGroup.visible;
 loadDemo();
 
 function animate() {
   requestAnimationFrame(animate);
-  const dt = Math.min(clock.getDelta(), 0.05);
+  const rawDt = clock.getDelta();
+  const dt = Math.min(rawDt, 0.05);
   const t = clock.elapsedTime;
   const simDt = paused ? 0 : dt;
   simTime += simDt;
 
   step(simDt);
   trackLocation(dt);
+  sampleMovement(rawDt);   // M2: real time, so the 3 s window means 3 s however slow the frames
   updateVisuals(dt, t);
 
   uiTimer -= dt;
@@ -2148,7 +2399,9 @@ function animate() {
     refreshLabels();
     renderRuleEval();
     renderProximityEval();
-    renderInspector();
+    renderWindows();
+    renderOverview();
+    renderStatus();
     renderLocation();
     metricsUI.render(0.2);
   }
@@ -2161,7 +2414,10 @@ animate();
 
 // Read-only handle for tests and the console.
 window.spatai = {
-  model, frames: FRAMES, plan: PLAN, loc, describeText, visitors: () => visitors, displays, toThree, toModel, guard,
+  model, frames: FRAMES, plan: PLAN, loc, describeText, visitors: () => visitors, displays, toThree, toModel, guard, tracker, activity,
+  windows: () => wins.map((w) => w.ref),
+  /** Vertices drawn per movement line style, for tests. */
+  movementLines: () => Object.fromEntries(Object.entries(mvLines).map(([k, l]) => [k, l.geometry.attributes.position?.count ?? 0])),
   metrics: () => metricsUI,
   /** Screen pixel of model point (x, y) at height h, e.g. to click it from a test. */
   screenOf(x, y, h = 0) {

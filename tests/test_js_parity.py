@@ -169,7 +169,8 @@ class JsParityTests(unittest.TestCase):
     def test_js_only_helpers(self):
         """Run the Node tests for code with no Python counterpart (text lookup, ArtworkGuard)."""
         proc = subprocess.run(
-            [NODE, "--test", str(ROOT / "tests" / "js" / "spatial.test.mjs"), str(ROOT / "tests" / "js" / "proximity.test.mjs")],
+            [NODE, "--test", str(ROOT / "tests" / "js" / "spatial.test.mjs"), str(ROOT / "tests" / "js" / "proximity.test.mjs"),
+             str(ROOT / "tests" / "js" / "movement.test.mjs")],
             capture_output=True, text=True, timeout=60,
         )
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
@@ -336,3 +337,64 @@ class JsMetricParityTests(unittest.TestCase):
         for key in ["ranges", "axioms", "inference"]:
             self.assertSame(self.py[key], self.js[key], key)
         self.assertFalse(self.py["axioms"]["task_small_self_distance"])
+
+
+# ---------------------------------------------------------------------------
+# Movement prepositions (docs/MOVEMENT_PREPOSITIONS.md M8)
+# ---------------------------------------------------------------------------
+
+def _movement_cases(n=300, seed=11):
+    """Random walks, orbits, straight passes and moving targets, all 13 samples long."""
+    import random
+
+    rng = random.Random(seed)
+    cases = []
+    for i in range(n):
+        kind = i % 4
+        if kind == 0:      # smooth random walk vs a fixed point
+            x, y, h = rng.uniform(0, 10), rng.uniform(0, 10), rng.uniform(0, 6.3)
+            agent = []
+            for _ in range(13):
+                agent.append([x, y])
+                h += rng.uniform(-0.6, 0.6)
+                s = rng.uniform(0, 0.35)
+                x, y = x + s * math.cos(h), y + s * math.sin(h)
+            e = [rng.uniform(0, 10), rng.uniform(0, 10)]
+            entity = [e] * 13
+        elif kind == 1:    # orbit, either way, sometimes spiralling
+            cx, cy, r, w = rng.uniform(0, 10), rng.uniform(0, 10), rng.uniform(0.8, 4), rng.choice([-1, 1]) * rng.uniform(0.1, 0.9)
+            dr = rng.uniform(-0.15, 0.15)
+            agent = [[cx + (r + dr * k) * math.cos(w * k * 0.25), cy + (r + dr * k) * math.sin(w * k * 0.25)] for k in range(13)]
+            entity = [[cx, cy]] * 13
+        elif kind == 2:    # straight line past or at a fixed point
+            x, y, vx, vy = rng.uniform(0, 10), rng.uniform(0, 10), rng.uniform(-1.3, 1.3), rng.uniform(-1.3, 1.3)
+            agent = [[x + vx * 0.25 * k, y + vy * 0.25 * k] for k in range(13)]
+            entity = [[rng.uniform(0, 10), rng.uniform(0, 10)]] * 13
+        else:              # two moving agents
+            x, y, vx, vy = rng.uniform(0, 6), rng.uniform(0, 6), rng.uniform(-1.2, 1.2), rng.uniform(-1.2, 1.2)
+            ex, ey, evx, evy = x + rng.uniform(-3, 3), y + rng.uniform(-3, 3), rng.uniform(-1, 1), rng.uniform(-1, 1)
+            agent = [[x + vx * 0.25 * k, y + vy * 0.25 * k] for k in range(13)]
+            entity = [[ex + evx * 0.25 * k, ey + evy * 0.25 * k] for k in range(13)]
+        cases.append({"agent": agent, "entity": entity, "reach": rng.choice([4.0, 5.0, 6.0])})
+    return cases
+
+
+@unittest.skipIf(NODE is None, "node is not installed")
+class JsMovementParityTests(unittest.TestCase):
+    assertSame = JsParityTests.assertSame
+
+    def test_classify_agrees(self):
+        from spatai.movement import classify
+
+        cases = _movement_cases()
+        py = []
+        for c in cases:
+            r = classify([tuple(p) for p in c["agent"]], [tuple(p) for p in c["entity"]], c["reach"])
+            py.append(r and [r.preposition, r.direction, r.path, r.radial, r.sweep, r.turn, r.distance])
+        proc = subprocess.run([NODE, str(ROOT / "tests" / "js" / "movement_parity.mjs")], input=json.dumps(cases),
+                              capture_output=True, text=True, check=True, timeout=60)
+        js = json.loads(proc.stdout)
+        self.assertSame(py, js, "movement")
+        kinds = {r[0] for r in py if r}
+        self.assertEqual(kinds, {"toward", "away", "around"}, "every preposition is exercised")
+        self.assertGreater(sum(r is None for r in py), 20)

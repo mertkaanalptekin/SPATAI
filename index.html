@@ -17,51 +17,70 @@
 <body>
   <div id="viewport"></div>
 
+  <!-- U1: one compact row; details live in the menus -->
   <header id="toolbar">
-    <div class="brand"><span class="dot"></span>Spatial AI · Neighborhood</div>
+    <div class="brand"><span class="dot"></span><span>Spatial AI</span></div>
 
-    <div class="group">
-      <span class="group-label">Visitor</span>
-      <button data-action="add-visitor" title="Spawn a visitor at the lobby entrance">＋ Visitor</button>
-      <button data-action="add-crowd" title="Spawn 10 visitors in the selected zone (default: exhibition)">＋10 Crowd</button>
-      <button data-action="remove-visitor" title="Remove the selected visitor (or the most recent one)">− Visitor</button>
-      <button data-action="add-staff" title="Add a staff member at the Checkout; staff answer artwork calls">＋ Staff</button>
+    <div class="menu">
+      <button class="menu-btn" aria-haspopup="menu" aria-expanded="false">＋ Add <span class="chev">▾</span></button>
+      <div class="menu-pop" role="menu" hidden>
+        <button role="menuitem" data-action="add-visitor">Visitor <span class="k">at the Entrance</span></button>
+        <button role="menuitem" data-action="add-crowd">Crowd of 10 <span class="k">wandering</span></button>
+        <button role="menuitem" data-action="add-staff">Staff member <span class="k">answers artwork calls</span></button>
+        <hr>
+        <button role="menuitem" data-action="remove-visitor">Remove <span class="k">selected, or the newest</span></button>
+      </div>
     </div>
 
-    <div class="group">
-      <span class="group-label">Smart Display</span>
-      <button data-action="launch-media" class="primary" title="Switch Current_Media to interactive content on the selected display (or every powered display)">▶ Launch_Media()</button>
-      <button data-action="reset-media" title="Return Current_Media to the default loop">⟲ Default loop</button>
+    <div class="menu">
+      <button class="menu-btn" aria-haspopup="menu" aria-expanded="false">▶ Media <span class="chev">▾</span></button>
+      <div class="menu-pop" role="menu" hidden>
+        <button role="menuitem" data-action="launch-media">Launch_Media() <span class="k">on screens that are ON</span></button>
+        <button role="menuitem" data-action="reset-media">Default loop <span class="k">all screens</span></button>
+      </div>
     </div>
 
-    <div class="group">
-      <span class="group-label">View</span>
-      <button data-action="toggle-relations" class="toggle on" title="Show enters / controls relationships">Relations</button>
-      <button data-action="toggle-velocity" class="toggle" title="Show visitor velocity vectors">Velocity</button>
-      <button data-action="toggle-labels" class="toggle on" title="Show entity labels">Labels</button>
-      <button data-action="toggle-places" class="toggle on" title="Show the zone boundary and named places">Places</button>
-      <button data-action="toggle-proximity" class="toggle on" title="Show personal-space rings, artwork guard rings and staff calls">Proximity</button>
-      <button data-action="reset-camera" title="Reset the camera">⌂ Camera</button>
+    <div class="menu" data-keep-open>
+      <button class="menu-btn" aria-haspopup="menu" aria-expanded="false">View <span class="chev">▾</span></button>
+      <div class="menu-pop" role="menu" hidden>
+        <button role="menuitemcheckbox" aria-checked="true" class="on" data-action="toggle-labels">Labels</button>
+        <button role="menuitemcheckbox" aria-checked="true" class="on" data-action="toggle-places">Rooms and plan symbols</button>
+        <button role="menuitemcheckbox" aria-checked="false" data-action="toggle-movement">Movement lines for everyone <span class="k">otherwise open windows only</span></button>
+        <button role="menuitemcheckbox" aria-checked="false" data-action="toggle-proximity">Personal-space rings <span class="k">otherwise stopped agents only</span></button>
+        <button role="menuitemcheckbox" aria-checked="false" data-action="toggle-relations">Relations <span class="k">zone node and links</span></button>
+        <button role="menuitemcheckbox" aria-checked="false" data-action="toggle-velocity">Velocity arrows</button>
+        <hr>
+        <button role="menuitem" data-action="reset-camera">Reset camera</button>
+      </div>
     </div>
 
-    <div class="group">
-      <span class="group-label">Simulation</span>
-      <button data-action="pause" title="Pause / resume visitor movement (Space)">⏸ Pause</button>
-      <button data-action="reset" title="Restore the demonstration scene">↺ Reset</button>
-    </div>
+    <span class="spacer"></span>
+    <button class="icon" data-action="pause" title="Pause / resume (Space)" aria-label="Pause">⏸</button>
+    <button class="icon" data-action="reset" title="Reset the scene" aria-label="Reset the scene">↺</button>
   </header>
 
-  <aside id="inspector" class="panel"></aside>
-
-  <section id="location" class="panel">
-    <div class="panel-head">
-      <div class="tabs" role="tablist" aria-label="Left panel">
-        <button role="tab" data-tab="location" aria-selected="true">Location</button>
-        <button role="tab" data-tab="metrics" aria-selected="false">Metrics</button>
-      </div>
-      <button class="caret-btn" data-loc-action="collapse" aria-expanded="true" title="Show / hide this panel"><span class="caret">▾</span></button>
+  <!-- U2: one drawer for every panel -->
+  <aside id="drawer" class="panel">
+    <div class="drawer-tabs" role="tablist" aria-label="Panels">
+      <button role="tab" data-tab="rules" aria-selected="true">Rules</button>
+      <button role="tab" data-tab="location" aria-selected="false">Location</button>
+      <button role="tab" data-tab="metrics" aria-selected="false">Metrics</button>
+      <button role="tab" data-tab="scene" aria-selected="false">Scene</button>
+      <button role="tab" data-tab="log" aria-selected="false">Log</button>
+      <button class="caret-btn" data-loc-action="collapse" aria-expanded="true" title="Show / hide the panel"><span class="caret">▾</span></button>
     </div>
-    <div class="loc-body" data-pane="location">
+
+    <div class="pane" data-pane="rules">
+      <h3>Proximity</h3>
+      <p class="rule-text">Closer than <b>1 m</b> to another agent → the one closing in faster <b>stops</b>.
+        A visitor closer than <b>1 m</b> to an artwork → the nearest <b>staff</b> comes over and the visitor <b>steps back</b>.</p>
+      <div id="prox-eval"></div>
+      <h3>Screens</h3>
+      <p class="rule-text">A visitor within <b>2.5 m</b> of a screen and fewer than <b>20</b> in the zone → the screen turns <b>ON</b>.</p>
+      <div id="rule-eval"></div>
+    </div>
+
+    <div class="pane" data-pane="location" hidden>
       <div class="q">
         <div class="q-title"><span class="q-tag">Q1</span>Locate<code>locate(id)</code></div>
         <div class="q-out" data-out="q1"></div>
@@ -80,12 +99,13 @@
       <div class="q">
         <div class="q-title"><span class="q-tag">Q4</span>Describe<code>describe(loc)</code></div>
         <div class="q-out" data-out="q4"></div>
-        <input type="search" placeholder="Find a place, e.g. near gallery-screen" aria-label="Find a place from a description" data-loc-input="find">
+        <input type="search" placeholder="Find a place, e.g. near g6-screen" aria-label="Find a place from a description" data-loc-input="find">
         <div class="q-out" data-out="find"></div>
       </div>
     </div>
-    <div class="loc-body met-body" data-pane="metrics" hidden>
-      <p class="m-hint">Distance from <b>A</b> to <b>B</b> under three metrics (docs/SIMULATION_METRICS.md). Click an agent to make it A; click the ground to make that spot B.</p>
+
+    <div class="pane met-body" data-pane="metrics" hidden>
+      <p class="m-hint">Distance from <b>A</b> to <b>B</b> under three metrics. Click an agent to make it A; click the ground or a room label to make it B.</p>
       <div class="m-row">
         <label class="m-pick"><span>A</span><select data-met="a" aria-label="A (from)"></select></label>
         <button data-met-action="swap" title="Swap A and B" aria-label="Swap A and B">⇄</button>
@@ -101,45 +121,63 @@
       <div class="m-notes" data-out="m-notes"></div>
       <h4>Comparison <span>A → B vs B → A</span></h4>
       <div class="m-chart" data-out="m-bars"></div>
-      <h4>Discrepancy map <span>every agent → B</span></h4>
-      <div class="m-chart" data-out="m-scatter"></div>
-      <p class="m-hint">Shaded corners: near by Euclidean but far by the other metric (top left), or the reverse (bottom right). Each agent has a ● for d_seq and a ■ for d_L.</p>
-      <h4>Inferred near B <span>normalised ≤ 0.2</span></h4>
-      <div data-out="m-occ"></div>
-      <h4>Far by one metric, near by another</h4>
-      <div data-out="m-disc"></div>
-      <h4>Show in the scene</h4>
-      <div class="m-toggles">
-        <label class="chk"><input type="checkbox" data-met-show="euclidean"><i class="sw" style="background:#3987e5"></i>Euclidean path</label>
-        <label class="chk"><input type="checkbox" data-met-show="seq"><i class="sw" style="background:#d95926"></i>d_seq route</label>
-        <label class="chk"><input type="checkbox" data-met-show="task"><i class="sw" style="background:#199e70"></i>d_L band</label>
-        <label class="chk"><input type="checkbox" data-met-show="case2">Case II: g1 ⇄ g2 arcs</label>
-        <label class="chk"><input type="checkbox" data-met-show="case3">Case III: petal at x</label>
+      <details class="m-more">
+        <summary>Every agent → B</summary>
+        <div class="m-chart" data-out="m-scatter"></div>
+        <p class="m-hint">Shaded corners: near by Euclidean but far by the other metric (top left), or the reverse (bottom right). ● d_seq, ■ d_L.</p>
+        <h4>Inferred near B <span>normalised ≤ 0.2</span></h4>
+        <div data-out="m-occ"></div>
+        <h4>Far by one metric, near by another</h4>
+        <div data-out="m-disc"></div>
+      </details>
+      <details class="m-more">
+        <summary>Show in the scene</summary>
+        <div class="m-toggles">
+          <label class="chk"><input type="checkbox" data-met-show="euclidean"><i class="sw" style="background:#3987e5"></i>Euclidean path</label>
+          <label class="chk"><input type="checkbox" data-met-show="seq"><i class="sw" style="background:#d95926"></i>d_seq route</label>
+          <label class="chk"><input type="checkbox" data-met-show="task"><i class="sw" style="background:#199e70"></i>d_L band</label>
+          <label class="chk"><input type="checkbox" data-met-show="case2">Case II: g1 ⇄ g2 arcs</label>
+          <label class="chk"><input type="checkbox" data-met-show="case3">Case III: petal at x</label>
+        </div>
+      </details>
+      <details class="m-more">
+        <summary>Axioms</summary>
+        <div class="m-axioms" data-out="m-axioms"></div>
+      </details>
+    </div>
+
+    <div class="pane" data-pane="scene" hidden>
+      <div id="overview"></div>
+    </div>
+
+    <div class="pane log-pane" data-pane="log" hidden>
+      <div class="log-filters" role="group" aria-label="Show in the log">
+        <label class="chk"><input type="checkbox" data-log-filter="rules" checked> Rules</label>
+        <label class="chk"><input type="checkbox" data-log-filter="proximity" checked> Proximity</label>
+        <label class="chk"><input type="checkbox" data-log-filter="location" checked> Location</label>
+        <label class="chk"><input type="checkbox" data-log-filter="movement"> Movement</label>
+        <label class="chk"><input type="checkbox" data-log-filter="metrics" checked> Metrics</label>
       </div>
-      <h4>Axioms</h4>
-      <div class="m-axioms" data-out="m-axioms"></div>
+      <ol id="log" class="hide-movement"></ol>
     </div>
-  </section>
+  </aside>
 
-  <section id="rules" class="panel">
-    <div class="rules-top">
-    <h3>Rule engine</h3>
-    <div class="rule-text prox-rules">
-      Personal space: two agents closer than <b>1 m</b> → the one closing in faster <code>stops</code>.<br>
-      Artwork: a visitor closer than <b>1 m</b> → the nearest <code>staff</code> comes over and the visitor <code>steps back</code>.
-    </div>
-    <div id="prox-eval"></div>
-    <div class="rule-text">
-      IF <code>Visitor.Position</code> within <b>2.5 m</b> of <code>Display.Position</code>
-      AND <code>Zone.Occupancy</code> &lt; <b>20</b> → <code>Power_State = ON</code>
-    </div>
-    <div id="rule-eval"></div>
-    </div>
-    <h3>Event log</h3>
-    <ol id="log"></ol>
-  </section>
+  <!-- M11: one window per agent (or screen, or zone) you click -->
+  <div id="windows" aria-live="polite"></div>
 
-  <div id="hint">Click: inspect or probe · hover: describe · drag visitors · right-drag: pan · scroll: zoom</div>
+  <!-- U3 -->
+  <footer id="statusbar">
+    <span data-status="text"></span>
+    <button class="icon small" data-action="help" aria-expanded="false" title="Controls and legend">?</button>
+  </footer>
+  <div id="help" class="popover panel" hidden>
+    <h3>Controls</h3>
+    <p>Click an agent or screen to open its window · drag agents to move them · click the ground to probe or set B · hover to describe a spot · right-drag to pan · scroll to zoom · Space pauses · Esc closes a window.</p>
+    <h3>Movement</h3>
+    <p><span class="mv-k toward">→ toward</span> <span class="mv-k away">← away from</span> <span class="mv-k around">↻ around</span> a screen, an artwork or another agent. Lines are drawn for agents whose window is open.</p>
+    <h3>Marks</h3>
+    <p>Ring on the floor: 2.5 m screen range · wedge: in front of a screen · ⏸: stopped for personal space · dashed amber line: staff on the way · ▸| one-way door (check valve) · S1–S3: shortcuts (S1 staff only).</p>
+  </div>
   <div id="hover-tip" role="status"></div>
 
   <script type="module" src="js/main.js"></script>

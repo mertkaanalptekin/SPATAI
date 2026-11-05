@@ -158,9 +158,9 @@ export function initMetrics(ctx) {
   }
 
   {
-    const glyphMat = mat(0xdbe3ee, 0.9);
+    const glyphMat = mat(0xdbe3ee, 0.45);   // U5: quieter plan symbols
     glyphMat.shared = true;
-    const resetMat = mat(0x8592a3, 0.85);
+    const resetMat = mat(0x8592a3, 0.4);
     resetMat.shared = true;
     const drawn = new Set();
     for (const e of plan.seqEdges) {
@@ -177,10 +177,10 @@ export function initMetrics(ctx) {
           const dir = [nx * sign, ny * sign];
           const at = door.point;
           // Diode / check-valve: a triangle pointing the allowed way, a bar across its tip.
-          const tri = new THREE.Mesh(arrowGeometry([{ at, dir }], 0.9, 0.06), e.kind === 'reset' ? resetMat : glyphMat);
-          const barPts = [[at[0] + dir[0] * 0.48 - dir[1] * 0.42, at[1] + dir[1] * 0.48 + dir[0] * 0.42],
-            [at[0] + dir[0] * 0.48 + dir[1] * 0.42, at[1] + dir[1] * 0.48 - dir[0] * 0.42]];
-          const bar = new THREE.Mesh(ribbonGeometry([barPts], 0.12, 0.061), e.kind === 'reset' ? resetMat : glyphMat);
+          const tri = new THREE.Mesh(arrowGeometry([{ at, dir }], 0.6, 0.06), e.kind === 'reset' ? resetMat : glyphMat);
+          const barPts = [[at[0] + dir[0] * 0.32 - dir[1] * 0.28, at[1] + dir[1] * 0.32 + dir[0] * 0.28],
+            [at[0] + dir[0] * 0.32 + dir[1] * 0.28, at[1] + dir[1] * 0.32 - dir[0] * 0.28]];
+          const bar = new THREE.Mesh(ribbonGeometry([barPts], 0.08, 0.061), e.kind === 'reset' ? resetMat : glyphMat);
           placesGroup.add(tri, bar);
         }
         from = to;
@@ -193,13 +193,13 @@ export function initMetrics(ctx) {
         const p = pts[0];
         const [nx, ny] = wallNormal(plan.doors.get(e.via[0]));
         const across = [[p[0] - nx * 1.4, p[1] - ny * 1.4], [p[0] + nx * 1.4, p[1] + ny * 1.4]];
-        placesGroup.add(polylineMesh(across, { color: 0xffb547, width: 0.12, h: 0.07, dashed: true }));
-        placesGroup.add(tag('S1 staff ↔', [p[0] - 1.5, p[1]], 'shortcut', '#ffb547', 0.08));
+        placesGroup.add(polylineMesh(across, { color: 0xffb547, width: 0.08, h: 0.07, dashed: true, opacity: 0.6 }));
+        placesGroup.add(tag('S1', [p[0] - 0.9, p[1]], 'shortcut', '#ffb547', 0.08));
       } else {
         const ext = [[pts[0][0], pts[0][1] - Math.sign(pts[1][1] - pts[0][1]) * 0.8], ...pts,
           [pts[1][0], pts[1][1] + Math.sign(pts[1][1] - pts[0][1]) * 0.8]];
-        placesGroup.add(polylineMesh(ext, { color: 0xdbe3ee, width: 0.14, h: 0.07, arrows: 99 }));
-        placesGroup.add(tag(e.label === 'S2' ? 'S2 express →' : 'S3 return →', [pts[0][0] + 1.9, (pts[0][1] + pts[1][1]) / 2], 'shortcut', INK, 0.08));
+        placesGroup.add(polylineMesh(ext, { color: 0xdbe3ee, width: 0.08, h: 0.07, arrows: 99, opacity: 0.45 }));
+        placesGroup.add(tag(e.label, [pts[0][0] + 0.9, (pts[0][1] + pts[1][1]) / 2], 'shortcut', INK, 0.08));
       }
     }
   }
@@ -498,7 +498,7 @@ export function initMetrics(ctx) {
       if (s.t >= 0.5) {
         const before = new Set(s.current.split(',').filter(Boolean));
         s.current = value; s.pending = null;
-        for (const d of list) if (!before.has(`${d.nearMetric}>${d.farMetric}`)) log(esc(discText(d, bName)), 'disc');
+        for (const d of list) if (!before.has(`${d.nearMetric}>${d.farMetric}`)) log(esc(discText(d, bName)), 'disc', [d.userId]);
       }
     }
   }

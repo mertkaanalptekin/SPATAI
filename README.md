@@ -126,6 +126,19 @@ M.discrepancies(plan, world, g1, ranges)     # bob: near by euclidean, far by se
 
 The rules are pure functions in `spatai/proximity.py`, ported to `js/proximity.js`. `ArtworkGuard` in `js/proximity.js` runs the staff calls in the page.
 
+## Movement prepositions
+
+[docs/MOVEMENT_PREPOSITIONS.md](docs/MOVEMENT_PREPOSITIONS.md) specifies how each agent's movement is described relative to the screens, artworks and other agents around it (M1–M12), and the simplified interface (U1–U6).
+
+- Positions are sampled 4 times a second and judged over the last **3 s** of the agent's own track. Only the agent's own movement counts.
+- **toward** (→, aqua): at least 40 % of the path, and 0.3 m, closes the distance to the entity.
+- **away from** (←, orange): at least 40 % of the path, and 0.3 m, opens it.
+- **around** (↻, violet): the agent sweeps at least 45° around the entity while turning the same way, and the move is mostly tangential. The log says clockwise or anticlockwise.
+- Reach: screens 6 m, artworks 5 m, other agents 4 m. An agent can hold several relations at once; its primary one (around, then toward, then away; nearest first) is shown on its label.
+- About one wanderer destination in four is a partial circuit around an artwork, so *around* happens in normal running.
+
+`classify()` is a pure function in `spatai/movement.py`, ported to `js/movement.js`. `MovementTracker` in `js/movement.js` samples the agents and emits events such as "bob walks toward g2-screen" or "carol walks around Installation g8 (anticlockwise)", once a relation has held for 0.5 s and at most once per 6 s.
+
 ## Web simulation
 
 The **Spatial AI Neighborhood** page shows the model as a full-window three.js scene. It is published with GitHub Pages at <https://mertkaanalptekin.github.io/SPATAI/>.
@@ -148,64 +161,45 @@ three.js r160 loads from the jsDelivr CDN through an import map, so there is no 
 - The page's 3D objects are views over those model records. Zone membership, the power-on rule, the four location questions and the three metrics all go through these modules.
 - The two implementations use the same arithmetic. Distances use a plain square root, shortest paths pop the same smallest (distance, node) entry, and ties and cone edges use the same tolerance. As a result, the page and Python give the same answers.
 
+### Interface
+
+- **Toolbar** (one row): **Add ▾** (Visitor at the Entrance, Crowd of 10, Staff member, Remove), **Media ▾** (`Launch_Media()` on screens that are ON, Default loop), **View ▾** (Labels, Rooms and plan symbols, Movement lines for everyone, Personal-space rings, Relations, Velocity arrows, Reset camera), pause (Space) and reset.
+- **Drawer** on the right, with tabs, collapsible to its tab strip:
+  - **Rules**: the two proximity rules and the power-on rule, with their live state;
+  - **Location**: the four location questions;
+  - **Metrics**: the three distance metrics;
+  - **Scene**: zones, screens, rooms and artworks;
+  - **Log**: the global event log, filtered by Rules, Proximity, Location, Movement (off by default) and Metrics.
+- **Windows**: click an agent, a screen or the zone node to open its window (up to three; drag by the header, Esc closes). An agent's window shows its current movement relations as chips, its own **Activity** log (movement, rooms entered, proximity stops, staff calls, rule triggers) and a collapsed **Details** section.
+- **Status bar**: agents, screens on, agents stopped and open artwork calls. **?** opens the controls and legend.
+- **In the scene**: labels are small text; an agent's label carries its primary movement glyph, for example "bob → g2-screen". Movement lines (solid arrow toward, dashed away, an arc around) are drawn for agents whose window is open, or for everyone from **View**. Artworks are unlabelled dots until hovered. Personal-space rings show only on stopped agents, guard rings and screen cones stay faint until something happens, and the zone node and relationship lines appear only with **Relations**.
+
 ### Scene
 
 | Entity | In the scene |
 | --- | --- |
-| **Spatial Zone** | The exhibition's purple floor and outline, with a floating node. `Ambient_Light` (lux) drives its ceiling light. |
-| **Place** | Labelled, semi-transparent ground regions: the ten galleries, Entrance, Checkout, the corridor, the reset passage and the exhibits l1–l3. Partition walls stand on every room boundary, with gaps at the doors. Each forward door carries a check-valve glyph (▶\|) pointing the allowed way, and the S1–S3 shortcuts are drawn and labelled. **Places** toggles the layer. |
-| **Smart Display** | Four kiosk screens (`g1-screen`, `g2-screen`, `g6-screen`, `g10-screen`) with a facing arrow, a ±45° "in front" wedge and a 2.5 m ring showing the rule radius. Both are coloured by the rule state. |
-| **Visitor** | A walking figure. alice, bob, carol and sam (staff) stand where the spec puts them until you drag them. Visitors you add wander from room to room through the doors. Each agent has a 0.5 m ring, so two rings overlap exactly when two agents are closer than 1 m. A stopped agent's ring turns amber and its label shows ⏸. Staff labels are amber. |
-| **Artwork** | One per gallery, with a 1 m guard ring that turns red while a visitor is too close. A dashed line joins a dispatched staff member to their visitor. **Proximity** toggles these overlays. |
-
-The relationships (toggle with **Relations**):
-
-- **Visitor _enters_ Spatial Zone**: thin lines from each visitor to its zone node.
-- **Spatial Zone _controls_ Smart Display**: dashed lines from the zone node to its displays.
+| **Spatial Zone** | The exhibition's floor and outline. `Ambient_Light` (lux) drives its ceiling light. With **Relations**, a floating node and lines show *Visitor enters Spatial Zone* and *Spatial Zone controls Smart Display*. |
+| **Place** | Labelled ground regions: the ten galleries, Entrance, Checkout, the corridor, the reset passage and the exhibits l1–l3. Partition walls stand on every room boundary, with gaps at the doors. Each forward door carries a small check-valve glyph (▸\|), and the shortcuts are tagged S1–S3. |
+| **Smart Display** | Four kiosk screens (`g1-screen`, `g2-screen`, `g6-screen`, `g10-screen`) with a faint "in front" wedge and 2.5 m ring, which brighten while a visitor is in range. The label's dot shows ON or OFF. |
+| **Visitor** | A walking figure. alice, bob, carol and sam (staff) stand where the spec puts them until you drag them; added visitors wander. A stopped agent shows its 0.5 m personal-space ring and ⏸. |
+| **Artwork** | One per gallery, with a faint 1 m guard ring that turns red while a visitor is too close. A dashed amber line joins a dispatched staff member to their visitor. |
 
 ### Metrics tab
 
-The left panel has two tabs. **Metrics** compares the three metrics between two locations, **A** and **B**:
+Compares the three metrics between two locations, **A** and **B**. Pick them in the tab, or click an agent (A) or the ground (B); ⇄ swaps them. A **visitor / staff** switch and a **strict valve** switch change the rules. The tab shows a table of A → B and B → A, raw and normalised, and a comparison chart. Further sections open on demand: **Every agent → B** (the discrepancy map, the agents inferred near B, and the current discrepancies), **Show in the scene** (the Euclidean, d_seq and d_L overlays, and the Case II and Case III figures) and **Axioms**.
 
-- **Pickers** for A and B: halls, Entrance, Checkout, corridor, exhibits and agents. Click an agent to make it A, or click the ground to make that spot B. Use ⇄ to swap them.
-- A **visitor / staff** switch, and a **strict valve** switch that removes the Exit/Reset loop.
-- A **table** of each metric's A → B and B → A values, raw and normalised, with the d_seq route and the d_L visiting order.
-- A **comparison chart**: grouped bars per metric, with solid bars for A → B and hatched bars for B → A, on the normalised scale and labelled with raw values. It shows d_seq's asymmetry, and, with A = B, d_L's non-zero self-distance.
-- A **discrepancy map**: every agent's normalised Euclidean distance to B against its d_seq (●) and d_L (■) distance. The near/far corners are shaded, and agents in them are named.
-- **Inferred near B**: the agents near B under each metric.
-- **Far by one metric, near by another**: every current discrepancy. Each new one is also written to the event log once it has held for 0.5 s, for example "alice: near Gallery 1 by Euclidean (5.0 m) but far by d_seq (7 steps)".
-- **Scene overlays**:
-  - the Euclidean line, the d_seq route through the doors and the d_L band through l1–l3;
-  - **Case II**: a tight arc from g1 to g2 labelled 1, and a large loop from g2 back to g1 around the building, labelled 7 (∞ in strict mode);
-  - **Case III**: the petal self-loop at the Entrance x through l1, l2 and l3, labelled d_L(x, x) = 96.7 m > 0.
-- An **axiom summary** for both metrics.
-
-Each tab shows only its own overlays. While Metrics is open, the Rule engine panel shrinks to its event log.
-
-### Location panel
+### Location tab
 
 | Question | How to ask it |
 | --- | --- |
-| **Q1 Locate**: `locate(id)` | Click a visitor, display, zone node or place label. The panel shows the object's coordinates and frame, plus world coordinates for a display, which sits in its own frame. |
-| **Q2 Occupants**: `occupants_at(loc, r)` | Click an empty spot on the ground. A ring marks the radius, which a slider adjusts, and the panel lists who is inside, with distances, or "nobody". |
-| **Q3 Frame of reference**: `position_in(id, frame)` | Choose World or a display's frame. The last visitor you clicked is shown in that frame as "X m ahead, Y m left/right". The frame's axes and the two legs of that offset are drawn on the floor. |
-| **Q4 Describe**: `describe(loc)` | Hover anywhere: "At Gallery 3 (in Exhibition → exhibition), 11.9 m right of g2-screen". Typing in the text box highlights the place a description points to: "near g6-screen", "in front of g1-screen", "gallery 7", "exhibit l2" or "bob". "In front of", "behind", "left of" and "right of" a display mean the point 1.5 m from it in that direction. |
+| **Q1 Locate**: `locate(id)` | Click a visitor, display, zone node or place label. |
+| **Q2 Occupants**: `occupants_at(loc, r)` | Click an empty spot on the ground. A ring marks the radius, which a slider adjusts. |
+| **Q3 Frame of reference**: `position_in(id, frame)` | Choose World or a display's frame; the last visitor you clicked is shown in it. |
+| **Q4 Describe**: `describe(loc)` | Hover anywhere, or type "near g6-screen", "in front of g1-screen", "gallery 7", "exhibit l2" or "bob". |
 
-The **Event log** also records location events, such as "alice entered Gallery 2", "carol left Exhibit l1 (back in Gallery 3)", "bob is now in front of g2-screen" and "bob moved away from g2-screen". A display relationship is tracked only within 4 m of the nearest display. A change is logged once it has held for 0.5 s.
+### Rules
 
-### Rule and action
-
-The **Rule engine** panel opens with the two proximity rules and their live state: pairs closer than 1 m and who has stopped, then each open artwork call and where it stands. The event log records "bob stops: 0.97 m from carol (personal space)" (once a stop has lasted 0.5 s), "bob walks on", "carol is 0.7 m from Installation g8 → sam dispatched", "sam reached carol; carol steps back from Installation g8", and "carol is 1.6 m from Installation g8 → sam returns to post". The inspector shows each agent's proximity state.
-
-The power-on rule above is evaluated every frame, and the panel shows each condition live. A green ring means the rule is satisfied. A red ring means a visitor is in range but the zone is at capacity. To keep the demo readable, a display returns to `OFF` 3 s after the rule stops matching, and its `Status` shows "Cooling down" in the meantime. **`Launch_Media()`** only works on a display that is ON.
-
-### Controls
-
-- **Visitor**: `＋ Visitor` spawns at the Entrance, `＋10 Crowd` adds ten wandering visitors to the selected zone (default exhibition), `− Visitor` removes the selected or most recent visitor, and `＋ Staff` adds a staff member at the Checkout, who wanders until called to an artwork.
-- **Smart Display**: `Launch_Media()` and `Default loop`.
-- **View**: toggles for Relations, Velocity, Labels, Places and Proximity, and a camera reset.
-- **Simulation**: pause or resume (Space), and reset to the spec's starting scene.
-- **In the scene**: click to inspect or probe, hover to describe, drag visitors, right-drag to pan, and scroll to zoom.
+The power-on rule is evaluated every frame. To keep the demo readable, a display returns to `OFF` 3 s after the rule stops matching. `Launch_Media()` only works on a display that is ON. The proximity rules log "bob stops: 0.97 m from carol (personal space)", "carol is 0.7 m from Installation g8 → sam dispatched" and so on; each event also appears in the windows of the agents involved.
 
 ## Tests
 
@@ -213,8 +207,8 @@ The power-on rule above is evaluated every frame, and the panel shows each condi
 python3 -m unittest -v
 ```
 
-This runs the Python tests. When Node.js is installed, it also runs `tests/test_js_parity.py`. That test sends the same queries through Python and through `js/spatial.js` (`tests/js/parity.mjs`) and fails on any difference. The queries cover every 0.5 m point across and around the lobby, the Reception Desk circle, nested rotated frames and the rule. `tests/test_metrics.py` covers the floor plan and the metrics, and `tests/test_proximity.py` covers the proximity rules, with tests keyed to the spec requirements. The parity test also runs 40 random agent scenarios through both proximity ports, and `tests/js/proximity.test.mjs` tests the staff-call state machine. The parity test also compares the exhibition, every metric over all reference pairs for both roles and both valve modes, a 2 m grid of points, the normalisation ranges, the axiom report and the inference results. It also runs the Node tests for the page-only text lookup:
+This runs the Python tests. When Node.js is installed, it also runs `tests/test_js_parity.py`, which sends the same queries through Python and the JS ports and fails on any difference: the spatial model (`tests/js/parity.mjs`), the exhibition and metrics, 40 random proximity scenarios, and the movement classifier (`tests/js/movement_parity.mjs`). `tests/test_metrics.py`, `tests/test_proximity.py` and `tests/test_movement.py` test the specs, keyed to their requirement IDs. The parity test also runs the Node tests for the page-only code:
 
 ```
-node --test tests/js/spatial.test.mjs
+node --test tests/js/spatial.test.mjs tests/js/proximity.test.mjs tests/js/movement.test.mjs
 ```

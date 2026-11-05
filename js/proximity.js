@@ -120,7 +120,7 @@ const m1 = (x) => x.toFixed(1);
  *   goTo:     staffId → Location to walk to (the approach point)
  *   release:  staff whose call ended, to send back to their post
  *   stepBack: visitorId → Location to step back to
- *   events:   [{ text }] for the event log
+ *   events:   [{ text, agents }] for the event log and the agents' own logs
  */
 export class ArtworkGuard {
   constructor() { this.calls = new Map(); }
@@ -136,7 +136,7 @@ export class ArtworkGuard {
 
   update(plan, world) {
     const goTo = new Map(), release = [], stepBack = new Map(), events = [];
-    const close = (vid, c, text) => { if (text) events.push({ text }); if (c.staff) release.push(c.staff); this.calls.delete(vid); };
+    const close = (vid, c, text) => { if (text) events.push({ text, agents: [vid, c.staff].filter(Boolean) }); if (c.staff) release.push(c.staff); this.calls.delete(vid); };
 
     for (const [vid, c] of this.calls) {
       if (!world.visitors.has(vid)) close(vid, c, '');
@@ -165,10 +165,10 @@ export class ArtworkGuard {
         const staff = nearestStaff(plan, world, v.position, busy);
         if (staff) { c.staff = staff; c.phase = 'dispatched'; }
         if (c.fresh !== undefined) {
-          events.push({ text: `${vid} is ${m1(c.fresh)} m from ${c.artwork} → ${staff ? `${staff} dispatched` : 'no staff free, waiting'}` });
+          events.push({ text: `${vid} is ${m1(c.fresh)} m from ${c.artwork} → ${staff ? `${staff} dispatched` : 'no staff free, waiting'}`, agents: [vid, staff].filter(Boolean) });
           delete c.fresh;
         } else if (staff) {
-          events.push({ text: `${staff} dispatched to ${vid} at ${c.artwork}` });
+          events.push({ text: `${staff} dispatched to ${vid} at ${c.artwork}`, agents: [vid, staff] });
         }
       }
       if (c.phase === 'dispatched') {
@@ -176,7 +176,7 @@ export class ArtworkGuard {
         if (s.position.distanceTo(v.position) <= STAFF_STANDOFF_M + ARRIVED_SLACK_M) {
           c.phase = 'stepping';
           c.target = stepBackPoint(plan, c.artwork, v.position);
-          events.push({ text: `${c.staff} reached ${vid}; ${vid} steps back from ${c.artwork}` });
+          events.push({ text: `${c.staff} reached ${vid}; ${vid} steps back from ${c.artwork}`, agents: [vid, c.staff] });
         } else {
           goTo.set(c.staff, approachPoint(plan, s.position, v.position));
         }
