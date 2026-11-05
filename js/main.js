@@ -20,6 +20,8 @@ import { HALLS, buildExhibition } from './exhibition.js';
 import { walk } from './metrics.js';
 import { initMetrics } from './metrics-panel.js';
 import { MovementTracker, PREPOSITIONS, PREP_STYLE, SAMPLE_HZ, describe } from './movement.js';
+import { CELL, buildWalls } from './exploration.js';
+import { Explorer, LOOK_AROUND, LOOK_HZ, LOOK_PERIOD, PHASE_LABEL } from './explorer.js';
 import {
   ARTWORK_DISTANCE_M, ArtworkGuard, PERSONAL_SPACE_M, REPLAN_AFTER_S, STAFF_STANDOFF_M, yields,
 } from './proximity.js';
@@ -63,6 +65,14 @@ const PROBE_COLOR = 0x38d0ff;
 const WANDER_ROOMS = ['Entrance', ...HALLS, 'Central Corridor', 'Checkout'];
 // Rooms whose label would collide with a neighbour's at the default spot (world metres).
 const LABEL_AT = { 'Central Corridor': [19.5, 9.5], 'Reset Passage': [2, 9.5], Entrance: [2, 6.3], Checkout: [2, 12.7] };
+
+// docs/EXPLORATION.md: the walls visitors bump into and see against (not their knowledge, E1).
+const VISITOR_WALLS = buildWalls(PLAN, 'visitor');
+const ARTWORK_XY = new Map([...PLAN.artworks].map(([id, l]) => { const w = l.toWorld(); return [id, [w.x, w.y]]; }));
+const SCREEN_INFO = new Map([...model.displays.values()].map((d) => {
+  const w = d.position.toWorld(), r = (FRAMES[d.displayId].rotation * Math.PI) / 180;
+  return [d.displayId, { xy: [w.x, w.y], forward: [Math.cos(r), Math.sin(r)] }];
+}));
 
 const DIRECTION_PHRASE = { front: 'in front of', behind: 'behind', left: 'left of', right: 'right of', at: 'at' };
 
@@ -636,11 +646,36 @@ class Visitor {
     this.arrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(), 1, 0xffd166, 0.2, 0.14);
     velocityGroup.add(this.arrow);
 
+    // E1: visitors start knowing nothing; staff know the building.
+    this.heading = 0;                    // model radians, the way it last walked
+    this.gaze = 0;
+    this.face = null;                    // [x, y] to look at while standing
+    this.lookClock = 0;
+    if (visitorModel.role !== 'staff') {
+      this.explorer = new Explorer({
+        id: this.User_ID, walls: VISITOR_WALLS, artworks: ARTWORK_XY, screens: SCREEN_INFO,
+        emit: (kind, text) => log(`<b>${esc(this.User_ID)}</b> ${esc(text)}`, kind === 'run' ? 'run' : 'explore', [this.User_ID]),
+      });
+      this.explorer.runStart = simTime;
+      this.explorer.look(this.xy(), this.gaze, 0, simTime);
+    }
+
     this.pickTarget();
     this.syncModel();
   }
 
-  pickTarget() {
+  xy() { return [this.Position.x + CX, CY - this.Position.z]; }
+
+  /** Where to go next. Explorers ask their own map (E4-E9); staff use the true plan. */
+  pickTarget(avoid = null) {
+    if (this.explorer) {
+      const res = this.explorer.next(this.xy(), this.heading, simTime, avoid && [avoid.Position.x + CX, CY - avoid.Position.z]);
+      this.pause = res.dwell;
+      this.face = res.face;
+      this.waypoints = res.waypoints.map(([x, y]) => worldXYToThree(x, y));
+      this.target.copy(this.waypoints.length ? this.waypoints.shift() : this.Position);
+      return;
+    }
     // Visitors are drawn to displays now and then, which is what exercises the rule.
     const goal = new THREE.Vector3();
     const candidates = this.homeZone ? this.homeZone.displays : displays;
@@ -710,7 +745,7 @@ class Visitor {
         } else {
           this.mode = null;
           this.pause = rand(1.5, 6);
-          this.pickTarget();
+          this.pickTarget();   // an explorer sets its own dwell (E5, E9)
         }
       } else {
         tmpDesired.copy(tmpTo).multiplyScalar(Math.min(speed, (d / 0.25) * speed) / d);
@@ -739,6 +774,7 @@ class Visitor {
         const me = [this.Position.x + CX, CY - this.Position.z];
         const other = [this.stopFor.Position.x + CX, CY - this.stopFor.Position.z];
         for (let tries = 0; tries < 8; tries++) {
+          if (this.explorer) { this.pickTarget(this.stopFor); this.pause = 0; break; }   // E10: plan around the agent
           this.pickTarget();
           const leg = [this.target.x - this.Position.x, -(this.target.z - this.Position.z)];
           if (!yields(this.User_ID, me, leg, this.stopFor.User_ID, other, [this.stopFor.intent.x, -this.stopFor.intent.z])) break;
@@ -777,6 +813,22 @@ class Visitor {
     this.group.position.copy(this.Position);
   }
 
+  /** E2: look LOOK_HZ times a second; walking, the gaze follows the heading, standing, it sweeps. */
+  look(dt) {
+    const sp = Math.hypot(this.Velocity.x, this.Velocity.z);
+    if (sp > 0.15 && !this.dragging) this.heading = Math.atan2(-this.Velocity.z, this.Velocity.x);
+    if (sp > 0.15) this.gaze = this.heading;
+    else if (this.face) {
+      const [x, y] = this.xy();
+      this.gaze = Math.atan2(this.face[1] - y, this.face[0] - x) + 0.35 * Math.sin((simTime * 2 * Math.PI) / LOOK_PERIOD);
+    } else this.gaze = this.heading + LOOK_AROUND * Math.sin((simTime * 2 * Math.PI) / LOOK_PERIOD);
+    if (!this.explorer) return;
+    this.lookClock += dt;
+    if (this.lookClock < 1 / LOOK_HZ) return;
+    this.lookClock = Math.min(this.lookClock - 1 / LOOK_HZ, 1 / LOOK_HZ);
+    this.explorer.look(this.xy(), this.gaze, 1 / LOOK_HZ, simTime);
+  }
+
   /** Copy the scene state into the model record the location queries read. */
   syncModel() {
     this.model.position = toModel(this.Position);
@@ -805,6 +857,7 @@ class Visitor {
     this.arrow.dispose();
     this.spaceRing.geometry.dispose();
     this.spaceMat.dispose();
+    if (this.cone) { visionGroup.remove(this.cone); this.cone.material.dispose(); }
     if (model.visitors.get(this.User_ID) === this.model) model.remove(this.User_ID);
     visitorById.delete(this.User_ID);
   }
@@ -957,6 +1010,7 @@ let simTime = 0;
 const LOG_CATEGORY = {
   info: 'rules', rule: 'rules', off: 'rules', action: 'rules', warn: 'rules',
   prox: 'proximity', place: 'location', enter: 'location', move: 'movement', disc: 'metrics',
+  explore: 'exploration', run: 'exploration',
 };
 // M11: each agent's (and screen's) own activity, shown in its window.
 const activity = new Map();   // id → [{ t, html, type }]
@@ -1049,6 +1103,7 @@ function runGuard() {
 
 function step(dt) {
   for (const v of visitors) v.update(dt, visitors);
+  for (const v of visitors) v.look(dt);
   for (const v of visitors) v.syncModel();
   runGuard();
 
@@ -1574,6 +1629,140 @@ function drawMovementLines() {
 }
 
 /** Inspector line: what the proximity rules are doing with this agent. */
+// ---------------------------------------------------------------------------
+// Exploration overlays (docs/EXPLORATION.md E11): the selected visitor's own map, and vision cones
+// ---------------------------------------------------------------------------
+const mapGroup = new THREE.Group();
+mapGroup.visible = false;
+scene.add(mapGroup);
+const visionGroup = new THREE.Group();
+scene.add(visionGroup);
+let visionForAll = false;
+
+const fogW = VISITOR_WALLS.nx, fogH = VISITOR_WALLS.ny;
+const fogData = new Uint8Array(fogW * fogH * 4);
+const fogTex = new THREE.DataTexture(fogData, fogW, fogH, THREE.RGBAFormat);
+fogTex.magFilter = THREE.NearestFilter;
+fogTex.colorSpace = THREE.SRGBColorSpace;
+const fogMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(fogW * CELL, fogH * CELL),
+  new THREE.MeshBasicMaterial({ map: fogTex, transparent: true, depthWrite: false }),
+);
+fogMesh.rotation.x = -Math.PI / 2;
+fogMesh.position.copy(worldXYToThree(VISITOR_WALLS.x0 + (fogW * CELL) / 2, VISITOR_WALLS.y0 + (fogH * CELL) / 2, 0.022));
+fogMesh.renderOrder = 1;
+mapGroup.add(fogMesh);
+
+const MAX_TRAIL = 4000;
+const trailLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ transparent: true, opacity: 0.85 }));
+trailLine.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAX_TRAIL * 3), 3));
+trailLine.frustumCulled = false;
+mapGroup.add(trailLine);
+
+// Found doors: a short bar across the opening. Spotted entities: a ring.
+const knownMarks = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xe8edf3, transparent: true, opacity: 0.7 }));
+knownMarks.frustumCulled = false;
+mapGroup.add(knownMarks);
+const routeLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineDashedMaterial({ color: 0xe8edf3, dashSize: 0.35, gapSize: 0.2, transparent: true, opacity: 0.8 }));
+routeLine.frustumCulled = false;
+mapGroup.add(routeLine);
+const routeLabels = [];
+
+const doorBars = new Map([...PLAN.doors.values()].map((d) => {
+  const [px, py] = d.point;
+  const vertical = VISITOR_WALLS.room[VISITOR_WALLS.cellOf([px - 0.25, py])] !== VISITOR_WALLS.room[VISITOR_WALLS.cellOf([px + 0.25, py])];
+  const h = DOOR_GAP / 2;
+  return [d.doorId, vertical ? [[px, py - h], [px, py + h]] : [[px - h, py], [px + h, py]]];
+}));
+
+function mapAgent() {
+  for (let i = wins.length - 1; i >= 0; i--) if (wins[i].entity.explorer && visitorById.has(wins[i].entity.User_ID)) return wins[i].entity;
+  return null;
+}
+
+/** E11: paint the map of the visitor in the most recently opened window. */
+function updateMapOverlay() {
+  const v = metricsActive() ? null : mapAgent();
+  mapGroup.visible = !!v;
+  for (const l of routeLabels) l.obj.visible = false;
+  if (!v) return;
+  const ex = v.explorer, seen = ex.map.seen, c = v.body.material.color;
+  const [r, g, b] = [c.r, c.g, c.b].map((x) => Math.round(Math.min(1, x) * 255));
+  const frontier = ex.phase === 'explore';
+  for (let k = 0; k < fogW * fogH; k++) {
+    const o = k * 4;
+    if (!seen[k]) { fogData[o] = 9; fogData[o + 1] = 11; fogData[o + 2] = 15; fogData[o + 3] = 190; continue; }
+    let edge = false;
+    if (frontier) {
+      const i = k % fogW, j = (k - i) / fogW;
+      edge = (i + 1 < fogW && !seen[k + 1] && !VISITOR_WALLS.blockE[k]) || (i > 0 && !seen[k - 1] && !VISITOR_WALLS.blockE[k - 1])
+        || (j + 1 < fogH && !seen[k + fogW] && !VISITOR_WALLS.blockN[k]) || (j > 0 && !seen[k - fogW] && !VISITOR_WALLS.blockN[k - fogW]);
+    }
+    fogData[o] = r; fogData[o + 1] = g; fogData[o + 2] = b; fogData[o + 3] = edge ? 120 : 34;
+  }
+  fogTex.needsUpdate = true;
+
+  const tp = trailLine.geometry.attributes.position.array;
+  const trail = ex.trail.slice(-MAX_TRAIL);
+  trail.forEach(([x, y], i) => { const p = worldXYToThree(x, y, 0.06); tp.set([p.x, p.y, p.z], i * 3); });
+  trailLine.geometry.setDrawRange(0, trail.length);
+  trailLine.geometry.attributes.position.needsUpdate = true;
+  trailLine.material.color.copy(c);
+
+  const pts = [];
+  const seg = (a, b) => { const p = worldXYToThree(a[0], a[1], 0.07), q = worldXYToThree(b[0], b[1], 0.07); pts.push(p.x, p.y, p.z, q.x, q.y, q.z); };
+  for (const d of ex.map.doors) { const bar = doorBars.get(d); if (bar) seg(bar[0], bar[1]); }
+  for (const [id, xy] of ex.entities) {
+    if (!ex.map.viewTime.has(id)) continue;
+    const rr = ex.screens.has(id) ? 0.55 : 0.75;
+    for (let i = 0; i < 20; i++) {
+      const a0 = (i / 20) * Math.PI * 2, a1 = ((i + 1) / 20) * Math.PI * 2;
+      seg([xy[0] + rr * Math.cos(a0), xy[1] + rr * Math.sin(a0)], [xy[0] + rr * Math.cos(a1), xy[1] + rr * Math.sin(a1)]);
+    }
+  }
+  knownMarks.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+
+  // E11: on a route, the stops in order, joined by a dashed line to the Checkout.
+  const stops = ex.phase === 'route' || (ex.phase === 'exit' && ex.run > 1) ? ex.routeAhead() : [];
+  const line = [];
+  if (stops.length) {
+    line.push(v.xy());
+    for (const s of stops) if (!s.done) line.push(s.xy);
+    line.push([2.25, 15.25]);
+  }
+  routeLine.geometry.setFromPoints(line.map(([x, y]) => worldXYToThree(x, y, 0.08)));
+  routeLine.computeLineDistances();
+  stops.forEach((s, i) => {
+    if (!routeLabels[i]) { routeLabels[i] = makeLabel('route-num', 0.9); scene.add(routeLabels[i].obj); }
+    const l = routeLabels[i];
+    l.obj.visible = true;
+    l.obj.position.copy(worldXYToThree(s.xy[0], s.xy[1], 0.9));
+    const html = `${s.done ? '✓' : i + 1}`;
+    if (l.el.textContent !== html) l.el.textContent = html;
+    l.el.classList.toggle('done', s.done);
+  });
+}
+
+// E11: a 120° fan, 6 m long, for visitors with an open window (or all, from View).
+const coneGeo = new THREE.CircleGeometry(6, 24, -Math.PI / 3, (2 * Math.PI) / 3);
+function updateVisionCones() {
+  const open = new Set(wins.map((w) => w.entity));
+  for (const v of visitors) {
+    const show = !!v.explorer && (visionForAll || open.has(v));
+    if (!show) { if (v.cone) v.cone.visible = false; continue; }
+    if (!v.cone) {
+      v.cone = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({
+        color: v.body.material.color, transparent: true, opacity: 0.1, depthWrite: false, side: THREE.DoubleSide,
+      }));
+      v.cone.renderOrder = 2;
+      visionGroup.add(v.cone);
+    }
+    v.cone.visible = true;
+    v.cone.position.set(v.Position.x, 0.05, v.Position.z);
+    v.cone.rotation.set(-Math.PI / 2, 0, v.gaze);
+  }
+}
+
 function proximityState(e) {
   if (e.stopFor) return `<span class="warn">stopped</span> for ${esc(e.stopFor.User_ID)} (personal space)`;
   if (e.mode === 'step') return '<span class="no">stepping back</span> from an artwork';
@@ -1669,6 +1858,8 @@ function updateVisuals(dt, t) {
   updateFrameOverlay();
   updateFindMarker(t);
   updateProximityVisuals(t);
+  updateVisionCones();
+  visionGroup.visible = !metricsMode;
 
   if (selected && selected.kind !== 'zone') {
     selRing.visible = true;
@@ -1760,6 +1951,22 @@ function movementChips(id) {
   }).join('') + (rels.length > 6 ? `<span class="rel"> +${rels.length - 6}</span>` : '');
 }
 
+/** E12: run, phase, how much is mapped, and the interests on a route. */
+function explorationSummary(v) {
+  const ex = v.explorer;
+  if (!ex) return '<span class="rel">staff: knows the building</span>';
+  const c = ex.counts, pct = Math.round(c.coverage * 100);
+  const phase = v.anchored && !v.mode ? 'standing' : PHASE_LABEL[ex.phase];
+  let html = `<div class="ex-line"><b>Run ${ex.run}</b> · ${phase} · ${pct}% seen</div>
+    <div class="bar ex-bar"><i style="width:${pct}%"></i></div>
+    <div class="ex-counts">rooms ${c.rooms}/${PLAN.rooms.size} · artworks ${c.artworks}/${PLAN.artworks.size} · screens ${c.screens}/${SCREEN_INFO.size}</div>`;
+  if (ex.stops.length && (ex.phase === 'route' || ex.phase === 'exit')) {
+    html += `<div class="ex-route">${ex.stops.map((st, i) =>
+      `<span class="${st.done ? 'done' : i === ex.stopIndex ? 'now' : ''}">${st.done ? '✓' : i + 1} ${esc(st.id)}</span>`).join('<i>→</i>')}</div>`;
+  }
+  return html;
+}
+
 function renderWindow(w, full = false) {
   const e = w.entity, el = w.el;
   if (full) {
@@ -1768,7 +1975,7 @@ function renderWindow(w, full = false) {
     if (e.kind === 'visitor') {
       details = `<div class="attrs">${attrRow('Position', 'Position')}${attrRow('Velocity', 'Velocity')}${attrRow('Dwell_Time', 'Dwell_Time')}${
         attrRow('Role', 'Role')}${attrRow('Place', 'Place', true)}${attrRow('Proximity', 'Prox', true)}${attrRow('Zone', 'rel', true)}${attrRow('Nearest screen', 'ctx', true)}</div>
-        <div class="btns"><button data-action="remove-visitor" class="danger">Remove</button></div>`;
+        <div class="btns">${e.explorer ? '<button data-action="finish-exploring">Finish exploring</button><button data-action="forget-map">Forget the map</button>' : ''}<button data-action="remove-visitor" class="danger">Remove</button></div>`;
     } else if (e.kind === 'zone') {
       details = `<div class="attrs">${attrRow('Occupancy', 'Occupancy')}${attrRow('Ambient_Light', 'Ambient_Light')}${attrRow('Boundary', 'Boundary', true)}</div>
         <div class="bar" data-field="occBar"><i></i></div>
@@ -1787,7 +1994,7 @@ function renderWindow(w, full = false) {
     el.innerHTML = `
       <header class="win-head" title="Drag to move"><span class="chip ${e.kind}">${kindLabel}</span><b data-field="title"></b>
         <span class="win-sub" data-field="sub"></span><button class="x" data-win-close title="Close (Esc)" aria-label="Close">×</button></header>
-      ${e.kind === 'visitor' ? '<div class="win-move" data-field="move"></div>' : ''}
+      ${e.kind === 'visitor' ? '<div class="win-move" data-field="move"></div><div class="win-explore" data-field="explore"></div>' : ''}
       <div class="win-cap">Activity</div>
       <ol class="act" data-act></ol>
       <details class="win-details"${e.kind === 'visitor' ? '' : ' open'}><summary>Details</summary>${details}</details>`;
@@ -1800,6 +2007,7 @@ function renderWindow(w, full = false) {
     f.title = esc(e.User_ID);
     f.sub = `${esc(model.placeAt(m.position)?.name ?? 'outside')}${e.stopFor ? ' · ⏸ stopped' : e.mode === 'step' ? ' · stepping back' : e.mode === 'duty' ? ' · on call' : ''}`;
     f.move = movementChips(e.User_ID);
+    f.explore = explorationSummary(e);
     f.Position = fmtLoc(m.position) + ' m';
     f.Velocity = `${e.Velocity.length().toFixed(2)} m/s`;
     f.Dwell_Time = `${e.Dwell_Time.toFixed(1)} s`;
@@ -1931,6 +2139,9 @@ function renderStatus() {
     stopped ? `<span class="warn">${stopped} stopped</span>` : '0 stopped',
     calls ? `<span class="no">${calls} artwork call${calls > 1 ? 's' : ''}</span>` : 'no artwork calls',
   ];
+  const ex = visitors.filter((v) => v.explorer && !v.anchored);
+  const exploring = ex.filter((v) => v.explorer.phase === 'explore').length, onRoute = ex.filter((v) => v.explorer.phase === 'route').length;
+  if (ex.length) parts.push(`${exploring} exploring · ${onRoute} on a route`);
   if (paused) parts.push('<span class="warn">paused</span>');
   const html = parts.join('<span class="sep">·</span>');
   if (statusEl.innerHTML !== html) statusEl.innerHTML = html;
@@ -1942,6 +2153,7 @@ function renderStatus() {
 let paused = false;
 let movementForAll = false;
 let ringsForAll = false;
+let simSpeed = 1;          // E14
 
 function contextZone() {
   if (!selected) return null;
@@ -2014,6 +2226,28 @@ const actions = {
   'toggle-movement'(btn) {
     movementForAll = !movementForAll;
     btn?.classList.toggle('on', movementForAll);
+  },
+  'toggle-vision'(btn) {
+    visionForAll = !visionForAll;
+    btn?.classList.toggle('on', visionForAll);
+  },
+  'finish-exploring'() {
+    const v = selected?.kind === 'visitor' ? selected : null;
+    if (!v?.explorer) return;
+    if (v.explorer.finishExploring()) { v.waypoints = []; v.target.copy(v.Position); v.pause = 0; }
+    else log(`${esc(v.User_ID)} has not explored ${v.explorer.phase === 'explore' ? 'the Checkout yet' : 'on this run'}`, 'warn', [v.User_ID]);
+  },
+  'forget-map'() {
+    const v = selected?.kind === 'visitor' ? selected : null;
+    if (!v?.explorer) return;
+    v.explorer.forget(simTime);
+    v.explorer.look(v.xy(), v.gaze, 0, simTime);
+    v.waypoints = []; v.target.copy(v.Position); v.pause = 0;
+    log(`<b>${esc(v.User_ID)}</b> forgets its map and starts exploring again`, 'run', [v.User_ID]);
+  },
+  speed(btn) {
+    simSpeed = simSpeed >= 4 ? 1 : simSpeed * 2;
+    if (btn) { btn.textContent = `×${simSpeed}`; btn.classList.toggle('on', simSpeed > 1); }
   },
   'toggle-places'(btn) {
     placesGroup.visible = !placesGroup.visible;
@@ -2286,6 +2520,7 @@ canvas.addEventListener('pointerup', (e) => {
     dragging.dragging = false;
     dragging.pause = 10;            // linger where dropped so the rule outcome is visible
     dragging.target.copy(dragging.Position);
+    dragging.waypoints = [];        // the old legs started somewhere else
     if (dragging.anchored) dragging.post = dragging.Position.clone();   // its new post (P9)
     canvas.releasePointerCapture(e.pointerId);
     canvas.style.cursor = 'grab';
@@ -2386,11 +2621,13 @@ function animate() {
   const dt = Math.min(rawDt, 0.05);
   const t = clock.elapsedTime;
   const simDt = paused ? 0 : dt;
-  simTime += simDt;
-
-  step(simDt);
+  // E14: at ×2 or ×4 the simulation takes that many steps per frame.
+  for (let i = 0; i < simSpeed; i++) {
+    simTime += simDt;
+    step(simDt);
+  }
   trackLocation(dt);
-  sampleMovement(rawDt);   // M2: real time, so the 3 s window means 3 s however slow the frames
+  sampleMovement(rawDt * (paused ? 1 : simSpeed));   // M2: real time × speed, so the 3 s window spans 3 s of walking
   updateVisuals(dt, t);
 
   uiTimer -= dt;
@@ -2402,6 +2639,7 @@ function animate() {
     renderWindows();
     renderOverview();
     renderStatus();
+    updateMapOverlay();
     renderLocation();
     metricsUI.render(0.2);
   }
@@ -2416,6 +2654,12 @@ animate();
 window.spatai = {
   model, frames: FRAMES, plan: PLAN, loc, describeText, visitors: () => visitors, displays, toThree, toModel, guard, tracker, activity,
   windows: () => wins.map((w) => w.ref),
+  explorer: (id) => visitorById.get(id)?.explorer ?? null,
+  mapAgent: () => mapAgent()?.User_ID ?? null,
+  mapOverlay: () => ({ visible: mapGroup.visible, trail: trailLine.geometry.drawRange.count, marks: knownMarks.geometry.attributes.position?.count ?? 0,
+    route: routeLine.geometry.attributes.position?.count ?? 0, cones: visionGroup.children.filter((c) => c.visible).length }),
+  setSpeed(n) { simSpeed = n; },
+  simTime: () => simTime,
   /** Vertices drawn per movement line style, for tests. */
   movementLines: () => Object.fromEntries(Object.entries(mvLines).map(([k, l]) => [k, l.geometry.attributes.position?.count ?? 0])),
   metrics: () => metricsUI,

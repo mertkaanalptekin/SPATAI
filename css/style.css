@@ -190,7 +190,10 @@ table.overview th { color: var(--muted); font-weight: 500; }
 #log li.move, .act li.move { color: var(--text); }
 .act li.empty { color: var(--muted); font-style: italic; border: none; }
 #log.hide-rules li.cat-rules, #log.hide-proximity li.cat-proximity, #log.hide-location li.cat-location,
-#log.hide-movement li.cat-movement, #log.hide-metrics li.cat-metrics { display: none; }
+#log.hide-movement li.cat-movement, #log.hide-metrics li.cat-metrics,
+#log.hide-exploration li.cat-exploration { display: none; }
+#log li.explore, .act li.explore { color: var(--muted); }
+#log li.run, .act li.run { color: #8ec5ff; }
 
 /* ---------- M11 entity windows ---------- */
 #windows {
@@ -214,6 +217,19 @@ table.overview th { color: var(--muted); font-weight: 500; }
 .win-head .x { margin-left: auto; padding: 0 7px; border: none; background: none; color: var(--muted); font-size: 16px; }
 .win-head .x:hover { color: var(--text); }
 .win-move { min-height: 20px; }
+/* E12 exploration summary */
+.win-explore { font-size: 12px; margin-top: 4px; }
+.ex-line b { font-weight: 600; }
+.ex-bar { margin: 3px 0; height: 4px; }
+.ex-bar > i { background: #8ec5ff; }
+.ex-counts { color: var(--muted); font-size: 11.5px; }
+.ex-route { margin-top: 3px; font-size: 11.5px; }
+.ex-route i { color: var(--faint); font-style: normal; margin: 0 4px; }
+.ex-route .done { color: var(--muted); text-decoration: line-through; }
+.ex-route .now { color: #8ec5ff; font-weight: 600; }
+.lbl.route-num { text-shadow: none; font-weight: 700; color: #0e1218; background: #e8edf3; border-radius: 99px; padding: 0 5px; }
+.lbl.route-num.done { background: rgba(232, 237, 243, .4); }
+#toolbar .icon.speed { font-size: 12px; min-width: 34px; }
 .win-cap { color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; margin: 6px 0 2px; }
 .act { overflow-y: auto; min-height: 40px; max-height: 18vh; flex: 1 1 auto; }
 .win-details { margin-top: 6px; font-size: 12px; overflow-y: auto; }

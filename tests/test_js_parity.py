@@ -398,3 +398,110 @@ class JsMovementParityTests(unittest.TestCase):
         kinds = {r[0] for r in py if r}
         self.assertEqual(kinds, {"toward", "away", "around"}, "every preposition is exercised")
         self.assertGreater(sum(r is None for r in py), 20)
+
+
+def _exploration_spec(seed=5):
+    """Random looks around the exhibition, with queries every few steps, plus interest and route cases."""
+    import random
+
+    from spatai.exhibition import build_exhibition
+
+    rng = random.Random(seed)
+    world, _, plan = build_exhibition()
+    artworks = {n: [l.to_world().x, l.to_world().y] for n, l in plan.artworks.items()}
+    entities = dict(artworks)
+    for d in world.displays.values():
+        w = d.position.to_world()
+        entities[d.display_id] = [w.x, w.y]
+    runs = []
+    for r in range(4):
+        x, y, h = 2.0, 4.0, 0.0
+        steps = []
+        for i in range(60):
+            if r == 3:     # anywhere in the building, any way
+                x, y, h = rng.uniform(0, 44), rng.uniform(0, 19), rng.uniform(-3.2, 3.2)
+            else:          # a wandering walk that stays inside
+                h += rng.uniform(-0.8, 0.8)
+                nx_, ny_ = x + 1.2 * math.cos(h), y + 1.2 * math.sin(h)
+                if 0.3 < nx_ < 43.7 and 0.3 < ny_ < 18.7:
+                    x, y = nx_, ny_
+                else:
+                    h += math.pi
+            steps.append({"pos": [x, y], "gaze": h + rng.uniform(-1, 1), "heading": h,
+                          "query": i % 6 == 5, "goal": rng.randrange(1 << 20)})
+        runs.append(steps)
+    names = sorted(entities)
+    interests = []
+    for _ in range(60):
+        view = {e: rng.choice([0, 0.25, 0.5, 1.0, rng.uniform(0, 8)]) for e in rng.sample(names, rng.randint(0, len(names)))}
+        taste = {e: rng.uniform(0.5, 1.5) for e in names if rng.random() < 0.7}
+        visits = {e: rng.randint(0, 2) for e in names if rng.random() < 0.4}
+        interests.append({"view": view, "taste": taste, "visits": visits, "k": rng.randint(1, 4)})
+    routes = []
+    for _ in range(40):
+        n = rng.randint(2, 7)
+        routes.append([[rng.choice([1.0, 2.0, rng.uniform(0, 30)]) for _ in range(n)] for _ in range(n)])
+    return {"entities": entities, "artworks": artworks, "runs": runs, "interests": interests, "routes": routes}
+
+
+def _exploration_py(spec):
+    from spatai import exploration as X
+    from spatai.exhibition import build_floorplan
+
+    plan = build_floorplan()
+    out = {"walls": {}, "runs": [], "interests": [], "routes": []}
+    for role in ("visitor", "staff"):
+        w = X.build_walls(plan, role)
+        out["walls"][role] = {"nx": w.nx, "ny": w.ny, "blockE": list(w.block_e), "blockN": list(w.block_n),
+                              "room": w.room, "doorEdges": {k: [list(e) for e in v] for k, v in w.door_edges.items()}}
+    walls = X.build_walls(plan)
+    entities = {k: tuple(v) for k, v in spec["entities"].items()}
+    artworks = {k: tuple(v) for k, v in spec["artworks"].items()}
+    for run in spec["runs"]:
+        cmap = X.new_map(walls)
+        steps = []
+        for s in run:
+            pos = tuple(s["pos"])
+            o = X.observe(walls, cmap, pos, s["gaze"], entities)
+            rec = {"obs": {"new": o["new"], "rooms": o["rooms"], "doors": o["doors"], "inView": o["in_view"],
+                           "spotted": o["spotted"]}, "coverage": X.coverage(cmap)}
+            if s["query"]:
+                blocked = X.keepout(walls, cmap, artworks)
+                rec["keepout"] = sum(blocked)
+                rec["frontiers"] = X.frontiers(walls, cmap, blocked)
+                nf = X.next_frontier(walls, cmap, pos, s["heading"], blocked)
+                rec["next"] = list(nf) if nf else None
+                seen = [k for k in range(cmap.size) if cmap.seen[k] and not blocked[k]]
+                g = seen[s["goal"] % (walls.nx * walls.ny) % len(seen)] if seen else 0
+                p = X.path_cells(walls, cmap, pos, g, blocked)
+                rec["path"] = [p[0], p[1]] if p else None
+                rec["smooth"] = [list(q) for q in X.smooth(walls, cmap, pos, p[0], blocked)] if p else None
+                rec["view"] = [(lambda v: list(v) if v else None)(X.viewpoint(walls, cmap, blocked, artworks[a], pos))
+                               for a in sorted(artworks)]
+            steps.append(rec)
+        out["runs"].append({"steps": steps, "rooms": cmap.rooms, "doors": cmap.doors, "viewTime": cmap.view_time})
+    for c in spec["interests"]:
+        out["interests"].append(X.choose_interests(c["view"], c["taste"], c["visits"], c["k"]))
+    for d in spec["routes"]:
+        order, length = X.order_route(d)
+        out["routes"].append([order, length])
+    return out
+
+
+@unittest.skipUnless(NODE, "Node.js not installed")
+class JsExplorationParityTests(unittest.TestCase):
+    assertSame = JsParityTests.assertSame
+
+    def test_exploration_agrees(self):
+        spec = _exploration_spec()
+        py = _exploration_py(spec)
+        proc = subprocess.run([NODE, str(ROOT / "tests" / "js" / "exploration_parity.mjs")], input=json.dumps(spec),
+                              capture_output=True, text=True, check=True, timeout=120)
+        js = json.loads(proc.stdout)
+        self.assertSame(py, js, "exploration")
+        # the spec exercises what it should
+        last = py["runs"][3]
+        self.assertGreater(len(last["rooms"]), 8)
+        self.assertTrue(any(s.get("next") for r in py["runs"] for s in r["steps"]))
+        self.assertTrue(any(s.get("keepout") for r in py["runs"] for s in r["steps"]))
+        self.assertTrue(any(s.get("smooth") and len(s["smooth"]) > 1 for r in py["runs"] for s in r["steps"]))

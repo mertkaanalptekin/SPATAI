@@ -135,9 +135,20 @@ The rules are pure functions in `spatai/proximity.py`, ported to `js/proximity.j
 - **away from** (←, orange): at least 40 % of the path, and 0.3 m, opens it.
 - **around** (↻, violet): the agent sweeps at least 45° around the entity while turning the same way, and the move is mostly tangential. The log says clockwise or anticlockwise.
 - Reach: screens 6 m, artworks 5 m, other agents 4 m. An agent can hold several relations at once; its primary one (around, then toward, then away; nearest first) is shown on its label.
-- About one wanderer destination in four is a partial circuit around an artwork, so *around* happens in normal running.
+- Visitors on an interest route (EXPLORATION.md E9) walk part of a circle around each artwork they stop at, so *around* happens in normal running.
 
 `classify()` is a pure function in `spatai/movement.py`, ported to `js/movement.js`. `MovementTracker` in `js/movement.js` samples the agents and emits events such as "bob walks toward g2-screen" or "carol walks around Installation g8 (anticlockwise)", once a relation has held for 0.5 s and at most once per 6 s.
+
+## Exploring visitors
+
+[docs/EXPLORATION.md](docs/EXPLORATION.md) (E1–E15) takes the building plan away from visitors. Staff still know it.
+
+- **Senses.** A visitor looks 4 times a second through a vision cone 6 m long and 120° wide, plus a 1 m near sense. Walls block sight; door openings do not. While standing, it looks around.
+- **Its own map.** The building is cut into 0.5 m cells. The visitor records the cells it has seen, the rooms, doors, artworks and screens it has found (with how long each was in view), and its trail. It plans only through cells it has seen, and keeps 1.2 m from artworks it knows about.
+- **Run 1: explore.** It walks to the nearest frontier between known and unknown space, preferring the way it faces, until nothing is left to explore. Then it walks to the Checkout, and through the Reset Passage back to the Entrance. At 1 m/s, a full map takes about four minutes.
+- **Run 2 and later: interests.** It picks 3 interests: the entities it has spotted, scored by time in view × its own taste × 0.5 for each earlier visit. It visits them in the order that is shortest on its own map, then leaves through the Checkout. At an artwork it walks part of a circle around it; at a screen it stands in front.
+
+`spatai/exploration.py` holds the pure functions (sight, map, frontiers, planning, interests, route order), ported to `js/exploration.js`. `js/explorer.js` runs a visitor's phases and runs in the page.
 
 ## Web simulation
 
@@ -163,15 +174,15 @@ three.js r160 loads from the jsDelivr CDN through an import map, so there is no 
 
 ### Interface
 
-- **Toolbar** (one row): **Add ▾** (Visitor at the Entrance, Crowd of 10, Staff member, Remove), **Media ▾** (`Launch_Media()` on screens that are ON, Default loop), **View ▾** (Labels, Rooms and plan symbols, Movement lines for everyone, Personal-space rings, Relations, Velocity arrows, Reset camera), pause (Space) and reset.
+- **Toolbar** (one row): **Add ▾** (Visitor at the Entrance, Crowd of 10, Staff member, Remove), **Media ▾** (`Launch_Media()` on screens that are ON, Default loop), **View ▾** (Labels, Rooms and plan symbols, Movement lines for everyone, Personal-space rings, Relations, Vision cones for everyone, Velocity arrows, Reset camera), speed (×1, ×2, ×4), pause (Space) and reset.
 - **Drawer** on the right, with tabs, collapsible to its tab strip:
   - **Rules**: the two proximity rules and the power-on rule, with their live state;
   - **Location**: the four location questions;
   - **Metrics**: the three distance metrics;
   - **Scene**: zones, screens, rooms and artworks;
-  - **Log**: the global event log, filtered by Rules, Proximity, Location, Movement (off by default) and Metrics.
-- **Windows**: click an agent, a screen or the zone node to open its window (up to three; drag by the header, Esc closes). An agent's window shows its current movement relations as chips, its own **Activity** log (movement, rooms entered, proximity stops, staff calls, rule triggers) and a collapsed **Details** section.
-- **Status bar**: agents, screens on, agents stopped and open artwork calls. **?** opens the controls and legend.
+  - **Log**: the global event log, filtered by Rules, Proximity, Location, Movement (off by default), Metrics and Exploration.
+- **Windows**: click an agent, a screen or the zone node to open its window (up to three; drag by the header, Esc closes). An agent's window shows its current movement relations as chips, its exploration (run, phase, share of the building seen, finds, and the interests on a route), its own **Activity** log (movement, discoveries, rooms entered, proximity stops, staff calls, rule triggers) and a collapsed **Details** section with *Finish exploring* and *Forget the map*. The visitor in the most recently opened window has its map drawn on the floor: fog where it has not looked, its trail, ticked doors, ringed finds and numbered stops, with its vision cone.
+- **Status bar**: agents, screens on, agents stopped, open artwork calls, and visitors exploring or on a route. **?** opens the controls and legend.
 - **In the scene**: labels are small text; an agent's label carries its primary movement glyph, for example "bob → g2-screen". Movement lines (solid arrow toward, dashed away, an arc around) are drawn for agents whose window is open, or for everyone from **View**. Artworks are unlabelled dots until hovered. Personal-space rings show only on stopped agents, guard rings and screen cones stay faint until something happens, and the zone node and relationship lines appear only with **Relations**.
 
 ### Scene
@@ -207,7 +218,7 @@ The power-on rule is evaluated every frame. To keep the demo readable, a display
 python3 -m unittest -v
 ```
 
-This runs the Python tests. When Node.js is installed, it also runs `tests/test_js_parity.py`, which sends the same queries through Python and the JS ports and fails on any difference: the spatial model (`tests/js/parity.mjs`), the exhibition and metrics, 40 random proximity scenarios, and the movement classifier (`tests/js/movement_parity.mjs`). `tests/test_metrics.py`, `tests/test_proximity.py` and `tests/test_movement.py` test the specs, keyed to their requirement IDs. The parity test also runs the Node tests for the page-only code:
+This runs the Python tests. When Node.js is installed, it also runs `tests/test_js_parity.py`, which sends the same queries through Python and the JS ports and fails on any difference: the spatial model (`tests/js/parity.mjs`), the exhibition and metrics, 40 random proximity scenarios, the movement classifier (`tests/js/movement_parity.mjs`), and random looks, map queries, interests and routes (`tests/js/exploration_parity.mjs`). `tests/test_metrics.py`, `tests/test_proximity.py`, `tests/test_movement.py` and `tests/test_exploration.py` test the specs, keyed to their requirement IDs. The parity test also runs the Node tests for the page-only code:
 
 ```
 node --test tests/js/spatial.test.mjs tests/js/proximity.test.mjs tests/js/movement.test.mjs

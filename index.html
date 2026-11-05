@@ -48,6 +48,7 @@
         <button role="menuitemcheckbox" aria-checked="false" data-action="toggle-movement">Movement lines for everyone <span class="k">otherwise open windows only</span></button>
         <button role="menuitemcheckbox" aria-checked="false" data-action="toggle-proximity">Personal-space rings <span class="k">otherwise stopped agents only</span></button>
         <button role="menuitemcheckbox" aria-checked="false" data-action="toggle-relations">Relations <span class="k">zone node and links</span></button>
+        <button role="menuitemcheckbox" aria-checked="false" data-action="toggle-vision">Vision cones for everyone <span class="k">otherwise open windows only</span></button>
         <button role="menuitemcheckbox" aria-checked="false" data-action="toggle-velocity">Velocity arrows</button>
         <hr>
         <button role="menuitem" data-action="reset-camera">Reset camera</button>
@@ -55,6 +56,7 @@
     </div>
 
     <span class="spacer"></span>
+    <button class="icon speed" data-action="speed" title="Simulation speed: ×1, ×2, ×4" aria-label="Simulation speed">×1</button>
     <button class="icon" data-action="pause" title="Pause / resume (Space)" aria-label="Pause">⏸</button>
     <button class="icon" data-action="reset" title="Reset the scene" aria-label="Reset the scene">↺</button>
   </header>
@@ -156,6 +158,7 @@
         <label class="chk"><input type="checkbox" data-log-filter="proximity" checked> Proximity</label>
         <label class="chk"><input type="checkbox" data-log-filter="location" checked> Location</label>
         <label class="chk"><input type="checkbox" data-log-filter="movement"> Movement</label>
+        <label class="chk"><input type="checkbox" data-log-filter="exploration" checked> Exploration</label>
         <label class="chk"><input type="checkbox" data-log-filter="metrics" checked> Metrics</label>
       </div>
       <ol id="log" class="hide-movement"></ol>
@@ -175,6 +178,8 @@
     <p>Click an agent or screen to open its window · drag agents to move them · click the ground to probe or set B · hover to describe a spot · right-drag to pan · scroll to zoom · Space pauses · Esc closes a window.</p>
     <h3>Movement</h3>
     <p><span class="mv-k toward">→ toward</span> <span class="mv-k away">← away from</span> <span class="mv-k around">↻ around</span> a screen, an artwork or another agent. Lines are drawn for agents whose window is open.</p>
+    <h3>Exploration</h3>
+    <p>Visitors start knowing nothing. They see through a 120° cone, 6 m long, and map what they see. Run 1 explores; later runs follow three interests. Open a visitor's window to see its map: fog where it has not looked, its trail, ticked doors, ringed finds and numbered stops.</p>
     <h3>Marks</h3>
     <p>Ring on the floor: 2.5 m screen range · wedge: in front of a screen · ⏸: stopped for personal space · dashed amber line: staff on the way · ▸| one-way door (check valve) · S1–S3: shortcuts (S1 staff only).</p>
   </div>

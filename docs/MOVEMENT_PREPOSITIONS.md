@@ -42,7 +42,7 @@ This spec covers two things. The first is the movement attributes of every agent
   - "sam walks away from bob".
 
   The same relation is not logged again within 6 s. Ends are not logged.
-- **M7. Viewing behaviour.** Some wanderers stop to look at an artwork: about one destination in four is a partial circuit of 120–240° around an artwork, at 1.4–1.7 m (outside its 1 m guard ring). That makes *around* happen in normal running, not only when you drag an agent.
+- **M7. Viewing behaviour.** Some wanderers stop to look at an artwork: about one destination in four is a partial circuit of 120–240° around an artwork, at 1.4–1.7 m (outside its 1 m guard ring). That makes *around* happen in normal running, not only when you drag an agent. (Implemented with EXPLORATION.md E9: the circuit is part of each artwork stop on a visitor's interest route.)
 - **M8. Code.** `classify()` is a pure function in `spatai/movement.py`, ported to `js/movement.js`; `tests/test_js_parity.py` checks the two agree. `MovementTracker` in `js/movement.js` samples, classifies and emits the M6 events. It is unit-tested in `tests/js/movement.test.mjs`.
 - **M9. Colours and glyphs**, validated as a set on the dark surface:
   - **toward**: aqua `#199e70`, glyph →;
@@ -64,7 +64,7 @@ This spec covers two things. The first is the movement attributes of every agent
 
 ## Interface (U1–U6)
 
-- **U1. Toolbar.** One row: the brand, then **Add ▾** (Visitor, Crowd of 10, Staff, Remove), **Media ▾** (Launch_Media, Default loop), **View ▾** (on/off options and camera reset), a pause button and a reset button. Menus open on click and close on Escape or an outside click.
+- **U1. Toolbar.** One row: the brand, then **Add ▾** (Visitor, Crowd of 10, Staff, Remove), **Media ▾** (Launch_Media, Default loop), **View ▾** (on/off options and camera reset), a speed button (EXPLORATION.md E14), a pause button and a reset button. Menus open on click and close on Escape or an outside click.
 - **U2. One side drawer** on the right replaces the inspector, Location and Rule engine panels. Its tabs are:
   - **Rules**: live state of the power-on and proximity rules (open by default);
   - **Location**: the four location questions;
