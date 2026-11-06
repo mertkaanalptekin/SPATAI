@@ -372,7 +372,7 @@ def _apply_face_alignment_metrics(res: ValidationResult, fa: dict[str, tuple[flo
     res.metrics.alignment_space = f"{kind} (per-face, median of 4 horizontal faces)"
 
 
-def _finite_or_none(x: float) -> Optional[float]:
+def _finite_or_none(x: Optional[float]) -> Optional[float]:
     return float(x) if x is not None and np.isfinite(x) else None
 
 

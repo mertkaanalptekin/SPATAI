@@ -74,3 +74,17 @@ def test_ground_prior():
     g = ground_plane_prior(64, 32, camera_height_m=2.5)
     assert np.isnan(g[:16]).all()
     assert g[-1, 0] == pytest.approx(2.5 / np.sin(np.deg2rad(90 - 180 * 0.5 / 32)), rel=1e-4)
+
+
+def test_metrics_nan_serialises_as_null():
+    from backend.models.schemas import DepthValidationMetrics
+
+    m = DepthValidationMetrics(scale_factor=1, shift_m=0, rmse_m=float("nan"), mae_m=float("nan"),
+                               abs_rel=float("nan"), inlier_ratio_pct=0, valid_surface_pct=0)
+    assert m.rmse_m is None and '"rmse_m":null' in m.model_dump_json()
+
+
+def test_no_overlap_does_not_crash():
+    d_sv = np.full((32, 64), np.nan, np.float32)
+    res = DualDepthValidator().validate(d_sv, np.ones((32, 64), np.float32))
+    assert res.metrics.rmse_m is None and (res.mask == 0).all()

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import math
 from enum import Enum
 from typing import Dict, List, Literal, Optional, Tuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SamplingMode(str, Enum):
@@ -88,13 +89,19 @@ class SampleResponse(BaseModel):
 class DepthValidationMetrics(BaseModel):
     scale_factor: float
     shift_m: float
-    rmse_m: float
-    mae_m: float
-    abs_rel: float
+    rmse_m: Optional[float]  # on verified/kept surfaces (exported as Validated_RMSE_m)
+    mae_m: Optional[float]
+    abs_rel: Optional[float]
     inlier_ratio_pct: float
     valid_surface_pct: float
+    rmse_all_m: Optional[float] = None  # on all joint pixels, incl. transient objects
     alignment_space: str = "depth"
     joint_pixels: int = 0
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _nan_to_none(cls, v):  # NaN is not valid JSON
+        return None if isinstance(v, float) and not math.isfinite(v) else v
 
 
 class ProcessOptions(BaseModel):

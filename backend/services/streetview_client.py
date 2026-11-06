@@ -255,7 +255,7 @@ class SyntheticProvider:
 
     @staticmethod
     def make_id(lat0: float, lon0: float, n: float) -> str:
-        return f"synth_{lat0:.6f}_{lon0:.6f}_{n:+.1f}"
+        return f"synth_{lat0:.6f}_{lon0:.6f}_{round(n, 1) + 0.0:+.1f}"
 
     @staticmethod
     def parse_id(pano_id: str) -> tuple[float, float, float]:

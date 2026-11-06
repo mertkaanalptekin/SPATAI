@@ -224,7 +224,7 @@ def _bundle_readme(req: ExportRequest, utm: UTMFrame, dem: Optional[DemRaster]) 
 Camera geometry : {req.geometry.value}
 Pinhole faces   : {req.face_size}x{req.face_size} px, FOV 90 deg, f35 = 18.0 mm, no distortion
 Pose prior      : {req.pose_prior.value} (XY +-{req.accuracy_xy_m} m, Z +-{req.accuracy_z_m} m, YPR +-{req.accuracy_ypr_deg} deg)
-Heights         : orthometric metres ({dem.vertical_datum if dem else "source altitude"})
+Heights         : {dem.vertical_datum if dem else "as delivered by the imagery source"} (metres)
 DEM             : {dem.source + f", {dem.resolution_m:.2f} m" if dem else "not included"}
 
 Agisoft Metashape Pro

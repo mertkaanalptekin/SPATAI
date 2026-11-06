@@ -210,19 +210,26 @@ class DualDepthValidator:
         only_ai = m & ~both
         fused[only_ai] = d_ai_metric[only_ai]
 
-        if joint.any():
-            err = d_ai_metric[joint] - d_sv[joint]
+        # "validated" error = agreement on the surfaces that survive the mask (what gets reconstructed);
+        # the raw RMSE over all joint pixels (incl. cars, reflections) is reported separately.
+        kept = joint & m
+        if kept.any():
+            err = d_ai_metric[kept] - d_sv[kept]
             rmse = float(np.sqrt(np.mean(err**2)))
             mae = float(np.mean(np.abs(err)))
-            abs_rel = float(np.mean(np.abs(err) / d_sv[joint]))
-            inlier_ratio = float(100.0 * (joint & (delta <= self.tau_m)).sum() / joint.sum())
+            abs_rel = float(np.mean(np.abs(err) / d_sv[kept]))
         else:
             rmse = mae = abs_rel = float("nan")
-            inlier_ratio = 0.0
+        if joint.any():
+            rmse_all = float(np.sqrt(np.mean((d_ai_metric[joint] - d_sv[joint]) ** 2)))
+            inlier_ratio = float(100.0 * (joint & (delta <= self.tau_m)).sum() / joint.sum())
+        else:
+            rmse_all, inlier_ratio = float("nan"), 0.0
         metrics = DepthValidationMetrics(
             scale_factor=alignment.scale,
             shift_m=alignment.shift,
             rmse_m=rmse,
+            rmse_all_m=rmse_all,
             mae_m=mae,
             abs_rel=abs_rel,
             inlier_ratio_pct=inlier_ratio,

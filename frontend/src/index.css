@@ -1,0 +1,13 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+html, body, #root { height: 100%; }
+body { @apply text-slate-200 antialiased; font-family: ui-sans-serif, system-ui, sans-serif; }
+.panel { @apply rounded-lg border border-slate-800 bg-slate-900/70; }
+.btn { @apply rounded-md bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40; }
+.btn-ghost { @apply rounded-md border border-slate-700 px-3 py-1.5 text-sm hover:bg-slate-800 disabled:opacity-40; }
+.label { @apply text-[11px] font-semibold uppercase tracking-wide text-slate-400; }
+.chip { @apply rounded px-2 py-1 text-xs border border-slate-700; }
+.chip-on { @apply bg-sky-600 border-sky-500 text-white; }
+.leaflet-container { background: #0f172a; }
+.heading-marker { background: none; border: none; }
