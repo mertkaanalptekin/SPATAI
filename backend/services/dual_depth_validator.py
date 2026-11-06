@@ -184,7 +184,7 @@ class DualDepthValidator:
         d_ai_metric = self.to_metric(d_ai_raw, alignment.scale, alignment.shift)
         if sky is None:
             sky = ~ai_ok | (d_ai_metric >= self.d_max * 0.999)
-        sky = sky & ~joint if sky is not None else np.zeros((h, w), bool)
+        sky = sky & ~joint
 
         with np.errstate(invalid="ignore"):
             delta = np.abs(d_sv - d_ai_metric).astype(np.float32)
@@ -204,9 +204,10 @@ class DualDepthValidator:
 
         fused = np.full((h, w), np.nan, dtype=np.float32)
         m = mask == 255
-        both = m & sv_ok
+        # blend only where both datasets agree; other kept pixels (unverified) take the AI detail
+        both = m & sv_ok & (np.nan_to_num(delta, nan=np.inf) <= self.tau_m)
         fused[both] = self.alpha * d_ai_metric[both] + (1.0 - self.alpha) * d_sv[both]
-        only_ai = m & ~sv_ok
+        only_ai = m & ~both
         fused[only_ai] = d_ai_metric[only_ai]
 
         if joint.any():

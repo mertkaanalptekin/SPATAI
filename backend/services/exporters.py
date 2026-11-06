@@ -21,7 +21,7 @@ import time
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Iterable, Optional
 from xml.sax.saxutils import quoteattr
 
 import cv2
@@ -255,11 +255,21 @@ class PhotogrammetryPackager:
     def build(
         self,
         req: ExportRequest,
-        items: list[ExportItem],
+        items: Iterable[ExportItem],
         dem: Optional[DemRaster] = None,
         progress: Optional[ProgressCb] = None,
+        center_latlon: Optional[tuple[float, float]] = None,
+        n_items: Optional[int] = None,
     ) -> tuple[Path, dict]:
+        """``items`` may be a lazy iterator (each panorama is processed, written and released)."""
         progress = progress or (lambda f, m: None)
+        if center_latlon is None or n_items is None:
+            items = list(items)
+            n_items = len(items)
+            center_latlon = (
+                float(np.mean([it.pano.lat for it in items])),
+                float(np.mean([it.pano.lon for it in items])),
+            )
         stamp = time.strftime("%Y%m%d_%H%M%S")
         root = self.work_dir / f"{req.project_name}_{stamp}"
         if root.exists():
@@ -273,14 +283,14 @@ class PhotogrammetryPackager:
         conv = CubemapConverter(req.face_size, 90.0)
         focal35 = None if spherical else conv.focal_35mm
         want_xmp = req.target in (TargetSoftware.REALITY_CAPTURE, TargetSoftware.BOTH)
-        lat_c = float(np.mean([it.pano.lat for it in items]))
-        lon_c = float(np.mean([it.pano.lon for it in items]))
+        lat_c, lon_c = center_latlon
         utm = UTMFrame.for_point(lat_c, lon_c)
+        written: list[tuple[PanoMetadata, Optional[float]]] = []
 
         poses: list[CameraPose] = []
         rmse: dict[str, float] = {}
         images_manifest: list[dict] = []
-        n_total = max(1, len(items))
+        n_total = max(1, n_items)
         for i, it in enumerate(items):
             pid = _safe(it.pano.pano_id)
             views: list[tuple[Optional[FaceSpec], str]] = (
@@ -321,6 +331,7 @@ class PhotogrammetryPackager:
                     {"file": fname, "pano_id": it.pano.pano_id, "face": face.name if face else "equirect",
                      "yaw": pose.yaw, "pitch": pose.pitch, "roll": pose.roll}
                 )
+            written.append((it.pano, it.rmse_m))
             progress(0.05 + 0.8 * (i + 1) / n_total, f"wrote {it.pano.pano_id}")
 
         if req.target in (TargetSoftware.METASHAPE, TargetSoftware.BOTH):
@@ -358,8 +369,8 @@ class PhotogrammetryPackager:
                 "metashape_pitch_convention": "0 = nadir, 90 = horizontal (ms_pitch = pitch + 90)",
             },
             "panoramas": [
-                {**json.loads(it.pano.model_dump_json(exclude={"raw_depth_b64"})), "validated_rmse_m": it.rmse_m}
-                for it in items
+                {**json.loads(p.model_dump_json(exclude={"raw_depth_b64"})), "validated_rmse_m": e}
+                for p, e in written
             ],
             "images": images_manifest,
             "dem": dem_info,

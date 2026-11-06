@@ -40,7 +40,7 @@ def test_recovers_scale_and_shift_and_masks_vehicle():
     assert (res.mask[:20] == 0).all()
     assert np.isnan(res.fused[res.mask == 0]).all()
     # fused = alpha * ai + (1 - alpha) * sv on verified pixels
-    m = (res.mask == 255) & np.isfinite(res.d_sv)
+    m = (res.mask == 255) & (np.nan_to_num(res.discrepancy, nan=99) <= 0.85)
     np.testing.assert_allclose(
         res.fused[m], 0.75 * res.d_ai_metric[m] + 0.25 * res.d_sv[m], rtol=1e-5
     )
