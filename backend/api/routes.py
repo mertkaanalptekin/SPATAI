@@ -24,7 +24,11 @@ from backend.models.schemas import (
     ProcessResponse,
     RevalidateRequest,
     SampleResponse,
+    SettingsUpdate,
+    SettingsView,
 )
+from backend.config import EDITABLE_OPTIONS, EDITABLE_SECRETS, Settings, update_env_file
+from backend.services.ai_depth_estimator import torch_available
 from backend.services.cubemap_projector import CUBE_FACES
 from backend.services.exporters import preview_files
 from backend.services.pipeline import Pipeline, ProcessedPano
@@ -233,3 +237,42 @@ async def dem(req: DemRequest, request: Request) -> DemResponse:
         min_m=float(np.nanmin(d.data)), max_m=float(np.nanmax(d.data)), vertical_datum=d.vertical_datum,
         hillshade_png_b64=base64.b64encode(buf.tobytes()).decode(),
     )
+
+
+# --------------------------------------------------------------------------- settings (UI-editable .env)
+def _settings_view(s: Settings) -> SettingsView:
+    return SettingsView(
+        **{f"{k}_set": bool(getattr(s, k)) for k in EDITABLE_SECRETS},
+        **{k: getattr(s, k) for k in EDITABLE_OPTIONS},
+        torch_available=torch_available(),
+        settings_file=str(s.settings_file),
+    )
+
+
+def _check_local(request: Request) -> None:
+    s = _pipe(request).s
+    host = request.client.host if request.client else ""
+    if not (s.allow_remote_settings or host in ("127.0.0.1", "::1", "localhost", "testclient")):
+        raise HTTPException(403, "Settings can only be changed from the machine running GeoPano3D")
+
+
+@router.get("/settings", response_model=SettingsView)
+async def get_settings_view(request: Request) -> SettingsView:
+    return _settings_view(_pipe(request).s)
+
+
+@router.put("/settings", response_model=SettingsView)
+async def update_settings(body: SettingsUpdate, request: Request) -> SettingsView:
+    _check_local(request)
+    old: Pipeline = request.app.state.pipeline
+    changes = {k: (v.strip() if isinstance(v, str) else v) for k, v in body.model_dump(exclude_none=True).items()}
+    if not changes:
+        return _settings_view(old.s)
+    update_env_file(old.s.settings_file, {k: str(v) for k, v in changes.items()})
+    # process env vars take precedence over .env in pydantic-settings, so apply the change explicitly
+    new_settings = old.s.model_copy(update=changes)
+    new = Pipeline(new_settings)
+    new.nodes = old.nodes  # keep discovered panoramas; processed results are recomputed on demand
+    new.jobs, new.job_files = old.jobs, old.job_files
+    request.app.state.pipeline = new
+    return _settings_view(new_settings)

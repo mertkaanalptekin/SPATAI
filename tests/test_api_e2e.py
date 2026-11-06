@@ -82,3 +82,27 @@ def test_ground_prior_mode_recovers_metric_scale(client):
     ok = np.isfinite(gt) & (gt < 60)
     rel = np.median(np.abs(ai[ok] - gt[ok]) / gt[ok])
     assert rel < 0.05, rel
+
+
+def test_settings_roundtrip(client, tmp_path):
+    pipe = client.app.state.pipeline
+    env = tmp_path / ".env"
+    env.write_text("# my comment\nPANO_ZOOM=3\nOTHER=keep\n")
+    pipe.s = pipe.s.model_copy(update={"settings_file": env})
+    before_nodes = dict(pipe.nodes)
+    v = client.get("/api/settings").json()
+    assert v["mapillary_access_token_set"] is False
+    r = client.put("/api/settings", json={"mapillary_access_token": " tok123 ", "pano_zoom": 2, "ai_depth_mode": "panorama"})
+    assert r.status_code == 200, r.text
+    v = r.json()
+    assert v["mapillary_access_token_set"] is True and v["pano_zoom"] == 2
+    assert "tok123" not in r.text  # secrets never echoed
+    text = env.read_text()
+    assert "# my comment" in text and "OTHER=keep" in text and "PANO_ZOOM=2" in text
+    assert "MAPILLARY_ACCESS_TOKEN=tok123" in text
+    new = client.app.state.pipeline
+    assert new is not pipe and new.nodes == before_nodes
+    assert client.get("/api/health").json()["sources"]["mapillary"] is True
+    # clearing a secret
+    assert client.put("/api/settings", json={"mapillary_access_token": ""}).json()["mapillary_access_token_set"] is False
+    assert client.put("/api/settings", json={"pano_zoom": 9}).status_code == 422

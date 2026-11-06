@@ -169,3 +169,39 @@ class DemResponse(BaseModel):
     max_m: float
     vertical_datum: str
     hillshade_png_b64: str
+
+
+class SettingsView(BaseModel):
+    """What the UI may see: secrets are only reported as set / not set."""
+
+    google_maps_api_key_set: bool
+    mapillary_access_token_set: bool
+    opentopography_api_key_set: bool
+    ai_depth_backend: Literal["auto", "transformers", "mock"]
+    ai_depth_mode: Literal["panorama", "cubemap"]
+    dem_source: Literal["auto", "terrarium", "opentopography"]
+    pano_zoom: int
+    default_cubemap_face_size: int
+    depth_work_width: int
+    camera_height_m: float
+    default_discrepancy_threshold_m: float
+    default_fusion_alpha: float
+    torch_available: bool
+    settings_file: str
+
+
+class SettingsUpdate(BaseModel):
+    """``None`` = leave unchanged; for secrets an empty string clears the key."""
+
+    google_maps_api_key: Optional[str] = Field(default=None, max_length=512)
+    mapillary_access_token: Optional[str] = Field(default=None, max_length=512)
+    opentopography_api_key: Optional[str] = Field(default=None, max_length=512)
+    ai_depth_backend: Optional[Literal["auto", "transformers", "mock"]] = None
+    ai_depth_mode: Optional[Literal["panorama", "cubemap"]] = None
+    dem_source: Optional[Literal["auto", "terrarium", "opentopography"]] = None
+    pano_zoom: Optional[int] = Field(default=None, ge=1, le=5)
+    default_cubemap_face_size: Optional[int] = Field(default=None, ge=256, le=4096)
+    depth_work_width: Optional[int] = Field(default=None, ge=256, le=4096)
+    camera_height_m: Optional[float] = Field(default=None, ge=0.5, le=10.0)
+    default_discrepancy_threshold_m: Optional[float] = Field(default=None, ge=0.05, le=10.0)
+    default_fusion_alpha: Optional[float] = Field(default=None, ge=0.0, le=1.0)

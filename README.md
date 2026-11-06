@@ -14,20 +14,49 @@ The full spec and the deviations from it are in [`CLAUDE.md`](CLAUDE.md).
 
 ## Quick start
 
-```bash
-pip install -e ".[dev]"            # add ",ai" for real Depth-Anything-V2 (torch + transformers)
-cp .env.example .env               # all keys optional
-pytest tests/ -v
-uvicorn backend.main:app --reload  # API on :8000
-```
+You only need **Python 3.11+** ([python.org](https://www.python.org/downloads/); on Windows tick *“Add python.exe to PATH”*). Node.js is **not** needed: the web UI ships prebuilt.
+
+| System | Start GeoPano3D |
+| --- | --- |
+| **Windows** | double-click **`start.bat`** |
+| **macOS** | double-click **`start.command`** (first time: right-click → Open) |
+| **Linux** | `./start.sh` |
+| **Docker** | `docker compose up --build`, then open http://localhost:8000 |
+
+The first start takes 1–2 minutes: it creates a private `.venv/`, installs the dependencies and creates `.env`. Later starts take a few seconds. Your browser opens at **http://127.0.0.1:8000** by itself; to stop, press **Ctrl+C** in the window (or close it).
+
+**API keys and options are set inside the app** (**⚙ Settings**, top right) and saved to `.env`, so there's no file editing. Without keys the app runs in demo mode on a synthetic street, so you can try everything right away.
+
+Useful options (they work the same with `start.bat`, `./start.sh` and `python launch.py`):
 
 ```bash
-cd frontend && npm install && npm run dev   # UI on :5173 (proxies /api to :8000)
+./start.sh --with-ai        # also install PyTorch + Depth-Anything-V2 (one-time ~1–2 GB download)
+```
+```bash
+./start.sh --port 8080 --no-browser
+```
+```bash
+./start.sh --host 0.0.0.0   # reachable from other computers on your network (Settings stays local-only)
+```
+```bash
+./start.sh --reinstall      # rebuild the Python environment from scratch
 ```
 
-Or run `npm run build` once; FastAPI then serves the UI itself at http://localhost:8000.
+Docker keeps its settings and exports in `./data/`. For the AI model, build with `docker compose build --build-arg WITH_AI=1`.
 
-**Without any keys** everything still works. The AOI resolves to a procedural street canyon whose textures are tied to world coordinates. Every panorama ships true planar depth in the Street View binary format, plus transient cars and pedestrians. Without torch, the AI stage uses a deterministic fallback (oracle depth under an unknown affine transform for synthetic scenes, a geometric prior otherwise).
+### For developers
+
+```bash
+pip install -e ".[dev]" && pytest tests/ -v
+```
+```bash
+uvicorn backend.main:app --reload            # API on :8000
+```
+```bash
+cd frontend && npm install && npm run dev     # hot-reloading UI on :5173 (proxies /api to :8000)
+```
+
+`npm run build` refreshes `frontend/dist/` (which is committed) and stamps it with a source hash. If the sources change and Node.js is installed, `launch.py` rebuilds the UI automatically.
 
 ## Imagery sources & licensing ⚠️
 
@@ -59,6 +88,7 @@ Higher-resolution national lidar (e.g. 0.5 m) can be read with `dem_service.read
 | Method | Endpoint | |
 | --- | --- | --- |
 | GET | `/api/health` | device, AI backend, configured sources |
+| GET / PUT | `/api/settings` | read / update keys & options (secrets are never returned; PUT is loopback-only unless `ALLOW_REMOTE_SETTINGS=true`) |
 | POST | `/api/aoi/sample` | AOI → deduplicated `PanoMetadata` (+ DEM altitudes) |
 | POST | `/api/pano/upload` | register your own equirectangular image |
 | POST | `/api/pano/{id}/process` | tiles → A → B → validation (`ai_mode`: `cubemap` \| `panorama`) |

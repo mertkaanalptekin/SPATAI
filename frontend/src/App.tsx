@@ -4,6 +4,7 @@ import MapSelector from "./components/MapSelector";
 import DualDepthInspector from "./components/DualDepthInspector";
 import CubemapPreview from "./components/CubemapPreview";
 import ExportBuilder from "./components/ExportBuilder";
+import SettingsPanel from "./components/SettingsPanel";
 
 type Tab = "inspector" | "cubemap" | "export";
 
@@ -27,10 +28,13 @@ export default function App() {
   const [messages, setMessages] = useState<string[]>([]);
   const [dem, setDem] = useState<DemResponse | null>(null);
   const [aiMode, setAiMode] = useState<"panorama" | "cubemap">("cubemap");
+  const [showSettings, setShowSettings] = useState(false);
 
-  useEffect(() => {
+  const loadHealth = useCallback(() => {
     api.health().then((h) => { setHealth(h); setAiMode(h.ai_depth_mode as "panorama" | "cubemap"); }).catch((e) => setMessages([`Backend unreachable: ${e}`]));
   }, []);
+  useEffect(loadHealth, [loadHealth]);
+  const demoOnly = !!health && !health.sources.google && !health.sources.mapillary;
 
   const updateNode = (p: PanoMetadata) => setNodes((ns) => ns.map((n) => (n.pano_id === p.pano_id ? p : n)));
 
@@ -93,13 +97,24 @@ export default function App() {
       <header className="flex flex-wrap items-center gap-3 border-b border-slate-800 px-4 py-2">
         <h1 className="text-lg font-semibold tracking-tight">GeoPano3D <span className="font-normal text-slate-400">Studio</span></h1>
         <span className="text-xs text-slate-500">360° street imagery + DEM → Metashape / RealityCapture</span>
-        {health && (
-          <span className="ml-auto flex gap-2 text-[11px]">
-            <span className="chip">AI: {health.ai_depth.backend} · {health.ai_depth.device}</span>
-            <span className="chip">DEM: {health.dem.opentopography_key ? "OpenTopography" : "Terrarium"}</span>
-          </span>
-        )}
+        <span className="ml-auto flex items-center gap-2 text-[11px]">
+          {health && (
+            <>
+              <span className="chip">AI: {health.ai_depth.backend === "mock" ? "fallback" : health.ai_depth.backend} · {health.ai_depth.device}</span>
+              <span className="chip">DEM: {health.dem.opentopography_key ? "OpenTopography" : "Terrarium"}</span>
+            </>
+          )}
+          <button className="btn-ghost text-sm" onClick={() => setShowSettings(true)}>⚙ Settings</button>
+        </span>
       </header>
+      {demoOnly && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-amber-900/50 bg-amber-950/40 px-4 py-1.5 text-xs text-amber-200">
+          Demo mode: no imagery keys yet, so “Find panoramas” uses a synthetic street with exact ground truth.
+          <button className="underline hover:text-white" onClick={() => setShowSettings(true)}>Add a free Mapillary token</button>
+          to process real streets.
+        </div>
+      )}
+      {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} onSaved={loadHealth} />}
 
       <main className="grid min-h-0 flex-1 gap-3 p-3 lg:grid-cols-[minmax(360px,2fr)_3fr]">
         <section className="flex min-h-[560px] flex-col gap-2">

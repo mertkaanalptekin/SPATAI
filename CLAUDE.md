@@ -390,6 +390,8 @@ Follow these phases sequentially. Run `pytest` at the end of each backend phase 
 The repository root *is* `geopano3d/`. Everything in §2 exists, plus:
 `backend/services/{geo.py, dem_service.py, synthetic_scene.py, pipeline.py}` and `tests/test_api_e2e.py`.
 
+Running for end users: `start.bat` / `start.command` / `start.sh` → `launch.py` (stdlib only: venv, deps from pyproject, UI rebuild when `frontend/dist/.source-hash` is stale, port pick, browser). `frontend/dist/` is committed so Node.js isn't required; rebuild with `npm run build` after UI changes. Keys/options are edited in the UI (`GET/PUT /api/settings` → `.env`, hot-reloads the `Pipeline`). Docker: `Dockerfile` + `docker-compose.yml` (settings + exports in `./data`).
+
 | Topic | Spec | Implemented | Why |
 | :--- | :--- | :--- | :--- |
 | Metric reference | SV planar depth only | SV planar depth **or** road-plane prior (camera height 2.5 m) | The public Map Tiles API exposes no depth; the prior still recovers metric scale via RANSAC on road pixels. Ground-prior mode masks sky only (it cannot tell cars from facade bases). |
@@ -407,4 +409,4 @@ The repository root *is* `geopano3d/`. Everything in §2 exists, plus:
 | DEM | – | OpenTopography (3DEP 1 m/10 m US, COP30) → AWS Terrarium z15; GeoTIFF + local-ENU OBJ + hillshade in bundle; fills pano altitudes | User request: highest-resolution DEM. |
 | Sources | Google | Google Map Tiles, Mapillary (CC-BY-SA), local upload, synthetic | Licensing + offline demo/tests. |
 
-Run: `pytest tests/ -v` (32 tests, no network / GPU needed).
+Run: `pytest tests/ -v` (33 tests, no network / GPU needed).

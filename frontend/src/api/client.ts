@@ -121,6 +121,27 @@ export interface DepthArrays {
   mask: Float32Array;
 }
 
+export interface SettingsView {
+  google_maps_api_key_set: boolean;
+  mapillary_access_token_set: boolean;
+  opentopography_api_key_set: boolean;
+  ai_depth_backend: "auto" | "transformers" | "mock";
+  ai_depth_mode: "panorama" | "cubemap";
+  dem_source: "auto" | "terrarium" | "opentopography";
+  pano_zoom: number;
+  default_cubemap_face_size: number;
+  depth_work_width: number;
+  camera_height_m: number;
+  default_discrepancy_threshold_m: number;
+  default_fusion_alpha: number;
+  torch_available: boolean;
+  settings_file: string;
+}
+
+export type SettingsUpdate = Partial<
+  Omit<SettingsView, "google_maps_api_key_set" | "mapillary_access_token_set" | "opentopography_api_key_set" | "torch_available" | "settings_file">
+> & { google_maps_api_key?: string; mapillary_access_token?: string; opentopography_api_key?: string };
+
 const BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -145,6 +166,8 @@ const post = <T>(path: string, body: unknown) => request<T>(path, { method: "POS
 
 export const api = {
   health: () => request<Health>("/api/health"),
+  settings: () => request<SettingsView>("/api/settings"),
+  saveSettings: (u: SettingsUpdate) => request<SettingsView>("/api/settings", { method: "PUT", body: JSON.stringify(u) }),
   sample: (req: AOIRequest) => post<SampleResponse>("/api/aoi/sample", req),
   process: (id: string, opts: Record<string, unknown> = {}) =>
     post<ProcessResponse>(`/api/pano/${encodeURIComponent(id)}/process`, opts),
