@@ -9,7 +9,7 @@ Visitors used to know the whole building: they were routed through the doors on 
 
 ## Knowledge and senses (E1–E3)
 
-- **E1. No prior knowledge.** Every visitor starts with an empty map, and plans only on what it has seen. That includes the demo visitors (alice, bob, carol), who stand where the spec puts them and only look around, and every crowd member. Staff know the building, because they work there, and keep routing on the true plan.
+- **E1. No prior knowledge.** Every visitor starts with an empty map, and plans only on what it has seen. That includes the demo visitors (alice, bob, carol), who stand where the spec puts them and only look around, and every crowd member. Staff know the building, because they work there, and keep routing on the true plan. The page starts with six more visitors arriving at the Entrance, one every 3 s, so exploring is visible from the start.
 - **E2. Senses.** A visitor looks 4 times a second.
   - **Vision cone:** 6 m range, 120° wide (±60°), centred on the gaze. The gaze follows the walking direction. While the visitor stands, it looks around: the gaze sweeps ±60° about its last heading every 2.5 s.
   - **Near sense:** everything within 1 m, all round, and the cells next to its own through an open edge.
@@ -25,7 +25,7 @@ Visitors used to know the whole building: they were routed through the doors on 
 ## Moving on one's own map (E4–E5)
 
 - **E4. Planning.** A visitor plans through seen cells only, 8-connected, without cutting corners. It keeps out of cells within 1.2 m of an artwork it has spotted, outside the 1 m guard ring. It can walk out of such a cell, for example after spotting an artwork it was already standing beside, but never into one. The cell path is straightened into legs that stay in seen, allowed cells.
-- **E5. Exploring.** A *frontier* is a seen, allowed cell with an open edge to an unknown cell. The explorer walks to the reachable frontier with the lowest cost: path length plus 2 m × (1 − cos of the turn from its heading), so it prefers to keep going the way it faces. On arrival it stands for 0.5–1.5 s and looks around, then picks the next. It has finished exploring when no reachable frontier is left. At 1 m/s, a visitor starting at the Entrance maps the whole building in about four minutes.
+- **E5. Exploring.** A *frontier* is a seen, allowed cell with an open edge to an unknown cell. The explorer walks to the reachable frontier with the lowest cost: path length plus 2 m × (1 − cos of the turn from its heading), so it prefers to keep going the way it faces. On arrival it walks straight on to the next one; only after discovering a room does it stand for 1–1.5 s and look around. It has finished exploring when no reachable frontier is left. At 1 m/s, a visitor starting at the Entrance maps the whole building in about four minutes.
 
 ## Runs, interests and routes (E6–E10)
 

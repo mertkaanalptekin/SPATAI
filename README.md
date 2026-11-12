@@ -141,11 +141,11 @@ The rules are pure functions in `spatai/proximity.py`, ported to `js/proximity.j
 
 ## Exploring visitors
 
-[docs/EXPLORATION.md](docs/EXPLORATION.md) (E1–E15) takes the building plan away from visitors. Staff still know it.
+[docs/EXPLORATION.md](docs/EXPLORATION.md) (E1–E15) takes the building plan away from visitors. Staff still know it. The page starts with six visitors arriving at the Entrance, one every 3 s; the spec's agents (alice, bob, carol and sam) stay where the spec puts them until you drag them.
 
 - **Senses.** A visitor looks 4 times a second through a vision cone 6 m long and 120° wide, plus a 1 m near sense. Walls block sight; door openings do not. While standing, it looks around.
 - **Its own map.** The building is cut into 0.5 m cells. The visitor records the cells it has seen, the rooms, doors, artworks and screens it has found (with how long each was in view), and its trail. It plans only through cells it has seen, and keeps 1.2 m from artworks it knows about.
-- **Run 1: explore.** It walks to the nearest frontier between known and unknown space, preferring the way it faces, until nothing is left to explore. Then it walks to the Checkout, and through the Reset Passage back to the Entrance. At 1 m/s, a full map takes about four minutes.
+- **Run 1: explore.** It walks from one frontier between known and unknown space to the next, preferring the way it faces, without stopping, and looks around only after discovering a room. It keeps going until nothing is left to explore. Then it walks to the Checkout, and through the Reset Passage back to the Entrance. At 1 m/s, a full map takes about four minutes.
 - **Run 2 and later: interests.** It picks 3 interests: the entities it has spotted, scored by time in view × its own taste × 0.5 for each earlier visit. It visits them in the order that is shortest on its own map, then leaves through the Checkout. At an artwork it walks part of a circle around it; at a screen it stands in front.
 
 `spatai/exploration.py` holds the pure functions (sight, map, frontiers, planning, interests, route order), ported to `js/exploration.js`. `js/explorer.js` runs a visitor's phases and runs in the page.

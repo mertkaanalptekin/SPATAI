@@ -19,10 +19,11 @@ NONE = bytearray(WALLS.nx * WALLS.ny)
 
 def explore(start=(2.0, 4.0), heading=0.0, speed=1.0, limit=900.0):
     """A kinematic explorer following E2 and E5; returns (map, seconds)."""
-    cmap, pos, t, wps, pause = X.new_map(WALLS), start, 0.0, [], 0.0
+    cmap, pos, t, wps, pause, new_room = X.new_map(WALLS), start, 0.0, [], 0.0, False
     while t < limit:
         gaze = heading + (math.radians(60) * math.sin(t * 2 * math.pi / 2.5) if pause > 0 else 0)
-        X.observe(WALLS, cmap, pos, gaze, ENTITIES)
+        if X.observe(WALLS, cmap, pos, gaze, ENTITIES)["rooms"]:
+            new_room = True
         if not wps and pause <= 0:
             blocked = X.keepout(WALLS, cmap, ARTWORKS)
             f = X.next_frontier(WALLS, cmap, pos, heading, blocked)
@@ -43,8 +44,8 @@ def explore(start=(2.0, 4.0), heading=0.0, speed=1.0, limit=900.0):
                     pos, rem = wps.pop(0), rem - d
                 else:
                     pos, rem = (pos[0] + dx / d * rem, pos[1] + dy / d * rem), 0
-            if not wps:
-                pause = 1.0
+            if not wps:   # E5: look around only after discovering a room
+                pause, new_room = (1.0 if new_room else 0.0), False
         t += 0.25
     return cmap, t
 

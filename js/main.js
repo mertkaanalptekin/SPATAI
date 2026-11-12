@@ -846,6 +846,8 @@ class Visitor {
   }
 
   dispose() {
+    this.group.remove(this.label.obj);   // fires 'removed', which takes the label's element off the page
+    this.label.el.remove();
     scene.remove(this.group);
     velocityGroup.remove(this.arrow);
     for (const m of [this.body, this.head]) {
@@ -1101,7 +1103,15 @@ function runGuard() {
   guardView = orders;
 }
 
+// E1: the demo lets visitors in through the Entrance one by one, so exploring shows from the start.
+const DEMO_ARRIVALS = 6, ARRIVAL_EVERY_S = 3;
+let arrivalsLeft = 0, arrivalClock = 0;
+
 function step(dt) {
+  if (arrivalsLeft > 0 && dt > 0) {
+    arrivalClock -= dt;
+    if (arrivalClock <= 0) { arrivalClock += ARRIVAL_EVERY_S; arrivalsLeft--; actions['add-visitor'](); }
+  }
   for (const v of visitors) v.update(dt, visitors);
   for (const v of visitors) v.look(dt);
   for (const v of visitors) v.syncModel();
@@ -2584,6 +2594,8 @@ function loadDemo() {
   select(null);
   logEl.innerHTML = '';
   simTime = 0;
+  arrivalsLeft = DEMO_ARRIVALS;
+  arrivalClock = 1;
 
   // The spec's agents (R15) stand where the spec puts them until you drag them.
   for (const mv of buildExhibition().world.visitors.values()) {
@@ -2659,6 +2671,8 @@ window.spatai = {
   mapOverlay: () => ({ visible: mapGroup.visible, trail: trailLine.geometry.drawRange.count, marks: knownMarks.geometry.attributes.position?.count ?? 0,
     route: routeLine.geometry.attributes.position?.count ?? 0, cones: visionGroup.children.filter((c) => c.visible).length }),
   setSpeed(n) { simSpeed = n; },
+  /** Reload the demo without its arrivals (tests that need a quiet scene). */
+  quietDemo() { loadDemo(); arrivalsLeft = 0; },
   simTime: () => simTime,
   /** Vertices drawn per movement line style, for tests. */
   movementLines: () => Object.fromEntries(Object.entries(mvLines).map(([k, l]) => [k, l.geometry.attributes.position?.count ?? 0])),

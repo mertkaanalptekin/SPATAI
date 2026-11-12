@@ -46,6 +46,7 @@ export class Explorer {
     this.leg = null;        // { kind, goal, stop? }
     this.blockedCache = null;
     this.avoid = null;      // E10: { me, other } while planning around an agent it yields to
+    this.newRoom = false;
   }
 
   get counts() {
@@ -58,6 +59,7 @@ export class Explorer {
   look(pos, gaze, dt, t) {
     const o = X.observe(this.walls, this.map, pos, gaze, this.entities, dt);
     for (const r of o.rooms) this.emit('discover', `discovers ${r}`);
+    if (o.rooms.length) this.newRoom = true;   // E5: look around at the end of this leg
     for (const e of o.spotted) this.emit('spot', `spots ${e}`);
     if (o.spotted.some((e) => this.artworks.has(e))) this.blockedCache = null;
     const last = this.trail[this.trail.length - 1];
@@ -112,7 +114,8 @@ export class Explorer {
     let dwell = 0, face = null;
     const leg = this.leg;
     if (leg && dist(pos, leg.goal) < ARRIVED) {
-      if (leg.kind === 'frontier') dwell = 0.5 + this.rng();
+      // E5: walk straight on, but stand and look around after discovering a room.
+      if (leg.kind === 'frontier') { dwell = this.newRoom ? 1 + 0.5 * this.rng() : 0; this.newRoom = false; }
       else if (leg.kind === 'exit') {
         this.emit('run', `reaches the Checkout: run ${this.run} done`);
         this.phase = 'reset';
